@@ -3,13 +3,19 @@
     .version = "0.1.0",
     .fingerprint = 0x55f66561244cdf41, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg.git#0dd86499cccdbf798330e184d02d5efac7e5b50b",
+            .hash = "zigimg-0.1.0-8_eo2uelFwC9-IbogKwVT_ze4KqosOEqa5O03ZXIa2UZ",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
         "test_support",
         "README.md",
+        "THIRD_PARTY_NOTICES.md",
         "CHANGELOG.md",
         "LICENSE",
         "PLAN.md",

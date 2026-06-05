@@ -16,6 +16,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ascii = @import("image_to_ascii");
+const image_loader = @import("image_loader");
 const ppm = @import("ppm_support");
 
 const common = @import("common.zig");
@@ -63,6 +64,9 @@ const CorpusCase = struct {
 const QualityResult = struct {
     fixture_name: []const u8,
     input_path: []const u8,
+    adapter: image_loader.Adapter,
+    image_format: image_loader.Format,
+    decoded_pixel_format: []const u8,
     image_width: u32,
     image_height: u32,
     mode: ascii.RenderMode,
@@ -166,8 +170,9 @@ fn evaluatePath(
     path: []const u8,
     options: Options,
 ) !QualityResult {
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024));
-    const image = try ppm.decode(allocator, bytes);
+    var loaded = try image_loader.loadPath(io, allocator, path);
+    defer loaded.deinit(allocator);
+    const image = loaded.imageView();
 
     const terminal = ascii.TerminalProfile{
         .columns = options.width,
@@ -206,6 +211,9 @@ fn evaluatePath(
     return .{
         .fixture_name = path,
         .input_path = path,
+        .adapter = loaded.adapter,
+        .image_format = loaded.format,
+        .decoded_pixel_format = loaded.pixel_format_name,
         .image_width = image.width,
         .image_height = image.height,
         .mode = options.mode,
@@ -229,6 +237,7 @@ fn evaluatePath(
 fn writeHumanReport(writer: *std.Io.Writer, result: QualityResult, options: Options, path: []const u8) !void {
     try writer.print(
         \\source        : {s} ({d}x{d})
+        \\decoder       : adapter={s} format={s} pixels={s}
         \\render        : mode={s} partition={s} color={s} fit={s} dither={s} stat={s}
         \\output cells  : {d}x{d}
         \\compare res   : {d}x{d}
@@ -238,12 +247,13 @@ fn writeHumanReport(writer: *std.Io.Writer, result: QualityResult, options: Opti
         \\edge corr.    : {d:.4}
         \\
     , .{
-        path,                   result.image_width,          result.image_height,
-        @tagName(options.mode), @tagName(options.partition), @tagName(options.color),
-        @tagName(options.fit),  @tagName(options.dither),    @tagName(options.stat),
-        result.output_columns,  result.output_rows,          result.compare_width,
-        result.compare_height,  result.mse,                  result.psnr_db,
-        result.ssim,            result.edge_correlation,
+        path,                     result.image_width,            result.image_height,
+        @tagName(result.adapter), @tagName(result.image_format), result.decoded_pixel_format,
+        @tagName(options.mode),   @tagName(options.partition),   @tagName(options.color),
+        @tagName(options.fit),    @tagName(options.dither),      @tagName(options.stat),
+        result.output_columns,    result.output_rows,            result.compare_width,
+        result.compare_height,    result.mse,                    result.psnr_db,
+        result.ssim,              result.edge_correlation,
     });
 }
 
@@ -256,8 +266,9 @@ fn writeSingleArtifacts(
 ) !void {
     if (options.write_recon == null and options.write_ref == null) return;
 
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024));
-    const image = try ppm.decode(allocator, bytes);
+    var loaded = try image_loader.loadPath(io, allocator, path);
+    defer loaded.deinit(allocator);
+    const image = loaded.imageView();
     const terminal = ascii.TerminalProfile{
         .columns = options.width,
         .rows = options.height,
@@ -446,6 +457,9 @@ fn writeJsonResult(writer: *std.Io.Writer, result: QualityResult) !void {
         \\    {{
         \\      "fixture_name": "{s}",
         \\      "input_path": "{s}",
+        \\      "adapter": "{s}",
+        \\      "image_format": "{s}",
+        \\      "decoded_pixel_format": "{s}",
         \\      "mode": "{s}",
         \\      "partition": "{s}",
         \\      "color_mode": "{s}",
@@ -465,6 +479,9 @@ fn writeJsonResult(writer: *std.Io.Writer, result: QualityResult) !void {
     , .{
         result.fixture_name,
         result.input_path,
+        @tagName(result.adapter),
+        @tagName(result.image_format),
+        result.decoded_pixel_format,
         @tagName(result.mode),
         @tagName(result.partition),
         @tagName(result.color),

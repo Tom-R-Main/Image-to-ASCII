@@ -1,6 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ascii = @import("image_to_ascii");
+const image_loader = @import("image_loader");
+const quality_tools = @import("quality_tools");
+
+const common = quality_tools.common;
+const metrics = quality_tools.metrics;
+const reconstruct = quality_tools.reconstruct;
 
 const Synthetic = enum { gradient, checkerboard, color_mix };
 const DiffScenario = enum { none, noop, single_cell, small_run, one_row, full };
@@ -101,6 +107,44 @@ const Args = struct {
     out_path: ?[]const u8 = null,
 };
 
+const RealImageSmokeCase = struct {
+    name: []const u8,
+    path: []const u8,
+    mode: ascii.RenderMode,
+    partition: ascii.PartitionKind = .density_1x1,
+    color: ascii.ColorMode = .none,
+    fit: ascii.FitMode = .contain,
+    dither: ascii.DitherMode = .none,
+    width: u32 = 80,
+    height: u32 = 24,
+};
+
+const RealImageSmokeResult = struct {
+    name: []const u8,
+    path: []const u8,
+    adapter: image_loader.Adapter,
+    format: image_loader.Format,
+    decoded_pixel_format: []const u8,
+    decoded_width: u32,
+    decoded_height: u32,
+    mode: ascii.RenderMode,
+    partition: ascii.PartitionKind,
+    color: ascii.ColorMode,
+    sampler_policy: ascii.SamplerPolicy,
+    output_columns: u32,
+    output_rows: u32,
+    psnr_db: f64,
+    ssim: f64,
+    edge_correlation: f64,
+    status: []const u8,
+};
+
+const real_image_smoke_cases = [_]RealImageSmokeCase{
+    .{ .name = "gradient-png-density", .path = "testdata/real/gradient.png", .mode = .density, .color = .none },
+    .{ .name = "line-art-png-glyph-structure", .path = "testdata/real/line-art.png", .mode = .glyph_structure, .color = .none },
+    .{ .name = "photo-jpeg-half-truecolor", .path = "testdata/real/photo-small.jpg", .mode = .partition, .partition = .half_1x2, .color = .truecolor },
+};
+
 pub fn main(init: std.process.Init) !void {
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa_state.deinit();
@@ -137,7 +181,11 @@ pub fn main(init: std.process.Init) !void {
     try stdout.flush();
 
     if (args.out_path) |path| {
-        try writeJsonResults(init.io, path, results[0..]);
+        if (std.mem.eql(u8, std.fs.path.basename(path), "real-image-smoke.json")) {
+            try writeRealImageSmokeJson(init.io, allocator, path);
+        } else {
+            try writeJsonResults(init.io, path, results[0..]);
+        }
     }
 }
 
@@ -724,6 +772,165 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         result.runs_emitted,
         result.ansi_bytes,
     });
+}
+
+fn writeRealImageSmokeJson(io: std.Io, allocator: std.mem.Allocator, out_path: []const u8) !void {
+    if (std.fs.path.dirname(out_path)) |dir| {
+        if (dir.len > 0) try std.Io.Dir.createDirPath(.cwd(), io, dir);
+    }
+
+    var results: [real_image_smoke_cases.len]RealImageSmokeResult = undefined;
+    for (real_image_smoke_cases, 0..) |case, idx| {
+        results[idx] = try runRealImageSmokeCase(io, allocator, case);
+        if (!std.math.isFinite(results[idx].psnr_db) or
+            !std.math.isFinite(results[idx].ssim) or
+            !std.math.isFinite(results[idx].edge_correlation))
+        {
+            return error.RealImageSmokeMetricNotFinite;
+        }
+    }
+
+    const file = try std.Io.Dir.createFile(.cwd(), io, out_path, .{ .truncate = true });
+    defer file.close(io);
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer: std.Io.File.Writer = .init(file, io, &file_buffer);
+    const writer = &file_writer.interface;
+
+    try writer.print(
+        \\{{
+        \\  "schema_version": 1,
+        \\  "zig_version": "{s}",
+        \\  "adapter": "zigimg",
+        \\  "smoke": {{
+        \\    "name": "real-image-smoke",
+        \\    "cases": {d}
+        \\  }},
+        \\  "results": [
+        \\
+    , .{
+        builtin.zig_version_string,
+        results.len,
+    });
+
+    for (results, 0..) |result, idx| {
+        if (idx != 0) try writer.writeAll(",\n");
+        try writeRealImageSmokeResult(writer, result);
+    }
+
+    try writer.writeAll(
+        \\
+        \\  ]
+        \\}
+        \\
+    );
+    try writer.flush();
+}
+
+fn runRealImageSmokeCase(io: std.Io, allocator: std.mem.Allocator, case: RealImageSmokeCase) !RealImageSmokeResult {
+    var loaded = try image_loader.loadPath(io, allocator, case.path);
+    defer loaded.deinit(allocator);
+    const image = loaded.imageView();
+
+    const terminal = ascii.TerminalProfile{
+        .columns = case.width,
+        .rows = case.height,
+        .color = case.color,
+        .symbols = symbolsForMode(case.mode),
+    };
+    const options = ascii.Options{
+        .mode = case.mode,
+        .partition = case.partition,
+        .fit = case.fit,
+        .dither = case.dither,
+    };
+    const sampler_policy = ascii.resolveSamplerPolicy(options, terminal, false);
+
+    var frame = try ascii.renderToCells(allocator, image, terminal, options);
+    defer frame.deinit(allocator);
+
+    var recon = try reconstruct.reconstructForMode(allocator, frame, case.mode);
+    defer recon.deinit(allocator);
+
+    const background = common.Rgb{
+        .r = terminal.background.r,
+        .g = terminal.background.g,
+        .b = terminal.background.b,
+    };
+    const crop = common.cropRectFor(image, terminal, case.fit);
+    var reference = try common.resizeReference(allocator, image, background, crop, recon.width, recon.height);
+    defer reference.deinit(allocator);
+
+    const report = try metrics.compare(allocator, reference, recon);
+    return .{
+        .name = case.name,
+        .path = case.path,
+        .adapter = loaded.adapter,
+        .format = loaded.format,
+        .decoded_pixel_format = loaded.pixel_format_name,
+        .decoded_width = loaded.width,
+        .decoded_height = loaded.height,
+        .mode = case.mode,
+        .partition = case.partition,
+        .color = case.color,
+        .sampler_policy = sampler_policy,
+        .output_columns = frame.columns,
+        .output_rows = frame.rows,
+        .psnr_db = report.psnr_db,
+        .ssim = report.ssim,
+        .edge_correlation = report.edge_correlation,
+        .status = "pass",
+    };
+}
+
+fn writeRealImageSmokeResult(writer: *std.Io.Writer, result: RealImageSmokeResult) !void {
+    try writer.print(
+        \\    {{
+        \\      "fixture": "{s}",
+        \\      "input_path": "{s}",
+        \\      "adapter": "{s}",
+        \\      "format": "{s}",
+        \\      "decoded_width": {d},
+        \\      "decoded_height": {d},
+        \\      "decoded_pixel_format": "{s}",
+        \\      "mode": "{s}",
+        \\      "partition": "{s}",
+        \\      "color_mode": "{s}",
+        \\      "sampler_policy": "{s}",
+        \\      "output_columns": {d},
+        \\      "output_rows": {d},
+        \\      "psnr_db": {d:.6},
+        \\      "ssim": {d:.6},
+        \\      "edge_correlation": {d:.6},
+        \\      "status": "{s}"
+        \\    }}
+    , .{
+        result.name,
+        result.path,
+        @tagName(result.adapter),
+        @tagName(result.format),
+        result.decoded_width,
+        result.decoded_height,
+        result.decoded_pixel_format,
+        @tagName(result.mode),
+        @tagName(result.partition),
+        @tagName(result.color),
+        @tagName(result.sampler_policy),
+        result.output_columns,
+        result.output_rows,
+        result.psnr_db,
+        result.ssim,
+        result.edge_correlation,
+        result.status,
+    });
+}
+
+fn symbolsForMode(mode: ascii.RenderMode) ascii.TerminalSymbols {
+    return switch (mode) {
+        .braille => .braille,
+        .glyph_tone, .glyph_structure => .glyphs,
+        else => .block_basic,
+    };
 }
 
 fn runFrameDiffOnce(ansi_buf: []u8, previous: *const ascii.Frame, current: *const ascii.Frame) !ascii.AnsiDiffStats {

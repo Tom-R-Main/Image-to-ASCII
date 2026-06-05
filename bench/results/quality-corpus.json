@@ -13,6 +13,9 @@
     {
       "fixture_name": "slash-glyph-structure",
       "input_path": "testdata/corpus/slash-line.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "glyph_structure",
       "partition": "density_1x1",
       "color_mode": "none",
@@ -32,6 +35,9 @@
     {
       "fixture_name": "checkerboard-braille",
       "input_path": "testdata/corpus/checkerboard.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "braille",
       "partition": "octant_2x4",
       "color_mode": "none",
@@ -51,6 +57,9 @@
     {
       "fixture_name": "thin-lines-quadrant",
       "input_path": "testdata/corpus/thin-lines.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "partition",
       "partition": "quadrant_2x2",
       "color_mode": "none",
@@ -70,6 +79,9 @@
     {
       "fixture_name": "gradient-density",
       "input_path": "testdata/corpus/grayscale-gradient.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "density",
       "partition": "density_1x1",
       "color_mode": "none",
@@ -89,6 +101,9 @@
     {
       "fixture_name": "color-bars-half-truecolor",
       "input_path": "testdata/corpus/color-bars.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "partition",
       "partition": "half_1x2",
       "color_mode": "truecolor",
@@ -108,6 +123,9 @@
     {
       "fixture_name": "shape-glyph-tone",
       "input_path": "testdata/corpus/shape-edge.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "glyph_tone",
       "partition": "density_1x1",
       "color_mode": "none",
@@ -127,6 +145,9 @@
     {
       "fixture_name": "low-contrast-glyph-structure",
       "input_path": "testdata/corpus/low-contrast-edge.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
       "mode": "glyph_structure",
       "partition": "density_1x1",
       "color_mode": "none",

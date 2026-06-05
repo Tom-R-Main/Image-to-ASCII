@@ -23,6 +23,7 @@ The durable product is a small, embeddable renderer for TUI apps, with Siftable 
   `tools/`.
 
 See [RESEARCH.md](RESEARCH.md) for the architecture rationale and [PLAN.md](PLAN.md) for the milestone plan.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for decoder/tool dependency attribution.
 
 ## Build
 
@@ -180,7 +181,7 @@ The package is a working library plus a thin CLI. Implemented:
 - selectable sampling strategy plus tuned span precomputation, reusable `PreparedImage` precompute, and reusable
   `RenderWorkspace` frame/scratch memory (zero steady-state allocations after the first same-shape render),
 - a fast hand-rolled ANSI writer with SGR run coalescing and frame-to-frame diff output for dirty TUI redraws,
-- a synthetic-image CLI and PPM/PAM fixture input (test-support, outside core),
+- a synthetic-image CLI plus PPM/PAM/PNG/JPEG file input through adapter/test-support code outside core,
 - a benchmark matrix with CSV output and tracked JSON baseline artifacts.
 
 ### Performance
@@ -197,6 +198,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/glyph-structure-optimized.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/real-image-smoke.json
 zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 ```
 
@@ -206,8 +208,9 @@ A measurement harness lives under `tools/` (`zig build compare`): it renders an 
 from the emitted cells (tonal glyphs as a linear coverage blend; block/Braille by their exact masks; `glyph_structure` by
 calibrated ASCII masks), and scores it with PSNR / SSIM / edge-correlation — **no font rasterizer required**.
 Without arguments it runs the color-bars smoke plus the slash-line glyph golden. With `--input`, it preserves the explicit
-single-fixture path. With `--corpus testdata/corpus --out bench/results/quality-corpus.json`, it runs the checked-in
-quality corpus and fails on non-finite metrics, slash-golden failure, or per-case threshold regressions.
+single-fixture path and can now load PPM/PAM/PNG/JPEG through the tool adapter. With
+`--corpus testdata/corpus --out bench/results/quality-corpus.json`, it runs the checked-in quality corpus and fails on
+non-finite metrics, slash-golden failure, or per-case threshold regressions.
 `tools/calibrate_font.zig` rasterizes a real font via stb_truetype (public domain, vendored under `tools/stb/`, linked
 only into the tool) to generate the glyph atlas (per-glyph coverage + structural features) used by the glyph render
 modes. In harness A/B, glyph-tone beats the linear density ramp (gradient PSNR 13.7 → 16.0 dB, SSIM 0.70 → 0.87).
@@ -220,10 +223,17 @@ zig build run -- --synthetic gradient --width 40 --height 12 --mode density --co
 
 # Render a checked-in PPM fixture with quadrant symbols:
 zig build run -- --input testdata/diagonal.ppm --width 40 --height 20 --mode partition --partition quadrant --color truecolor
+
+# Render real PNG/JPEG fixtures through the CLI adapter:
+zig build run -- --input testdata/real/gradient.png --width 80 --height 24 --mode density --color none
+zig build run -- --input testdata/real/photo-small.jpg --width 80 --height 24 --mode partition --partition half --color truecolor
 ```
 
-Flags: `--input` (PPM/PAM), `--synthetic gradient|checkerboard|color-bars`, `--width`, `--height`,
+Flags: `--input` (PPM/PAM/PNG/JPEG), `--synthetic gradient|checkerboard|color-bars`, `--width`, `--height`,
 `--mode density|partition|braille|glyph-tone|glyph-structure`, `--partition density|half|quadrant`,
 `--color none|truecolor`, `--fit contain|cover|stretch`, `--dither none|ordered-2x2|ordered-4x4`, `--invert`. If
 `--input` is omitted, a synthetic gradient is rendered.
+
+PNG/JPEG loading is implemented with `zigimg` in `test_support/image_loader.zig` and imported only by the CLI/tools. The
+core module still exposes raw `ImageView`/`Rgba8` input and does not export decoder types.
 </content>

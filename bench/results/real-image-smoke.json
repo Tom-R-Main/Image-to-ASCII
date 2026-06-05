@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "zig_version": "0.16.0",
+  "adapter": "zigimg",
+  "smoke": {
+    "name": "real-image-smoke",
+    "cases": 3
+  },
+  "results": [
+    {
+      "fixture": "gradient-png-density",
+      "input_path": "testdata/real/gradient.png",
+      "adapter": "zigimg",
+      "format": "png",
+      "decoded_width": 32,
+      "decoded_height": 24,
+      "decoded_pixel_format": "rgb24",
+      "mode": "density",
+      "partition": "density_1x1",
+      "color_mode": "none",
+      "sampler_policy": "span_precompute",
+      "output_columns": 64,
+      "output_rows": 24,
+      "psnr_db": 10.039169,
+      "ssim": 0.725748,
+      "edge_correlation": 0.233957,
+      "status": "pass"
+    },
+    {
+      "fixture": "line-art-png-glyph-structure",
+      "input_path": "testdata/real/line-art.png",
+      "adapter": "zigimg",
+      "format": "png",
+      "decoded_width": 32,
+      "decoded_height": 24,
+      "decoded_pixel_format": "rgb24",
+      "mode": "glyph_structure",
+      "partition": "density_1x1",
+      "color_mode": "none",
+      "sampler_policy": "span_precompute",
+      "output_columns": 64,
+      "output_rows": 24,
+      "psnr_db": 8.231628,
+      "ssim": 0.027296,
+      "edge_correlation": 0.045640,
+      "status": "pass"
+    },
+    {
+      "fixture": "photo-jpeg-half-truecolor",
+      "input_path": "testdata/real/photo-small.jpg",
+      "adapter": "zigimg",
+      "format": "jpeg",
+      "decoded_width": 48,
+      "decoded_height": 36,
+      "decoded_pixel_format": "rgb24",
+      "mode": "partition",
+      "partition": "half_1x2",
+      "color_mode": "truecolor",
+      "sampler_policy": "direct_box",
+      "output_columns": 64,
+      "output_rows": 24,
+      "psnr_db": 39.844089,
+      "ssim": 0.985907,
+      "edge_correlation": 0.883679,
+      "status": "pass"
+    }
+  ]
+}

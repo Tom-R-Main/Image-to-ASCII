@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### CLI and Tooling
+
+- Added a CLI/tool-layer real image adapter using `zigimg` for PNG and JPEG
+  input. The adapter converts decoded pixels into owned `[]Rgba8` and exposes
+  only `ImageView` to the renderer, so `src/root.zig` and the core API remain
+  decoder-free. The CLI still supports PPM/PAM fixtures unchanged, and
+  `bench/results/real-image-smoke.json` records small PNG/JPEG smoke fixtures
+  with decoded format, sampler policy, PSNR, SSIM, and edge-correlation.
+  Third-party attribution is tracked in `THIRD_PARTY_NOTICES.md`.
+
 ### Performance
 
 - sRGB->linear conversion is now a compile-time 256-entry lookup table instead of

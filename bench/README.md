@@ -80,6 +80,7 @@ Initial targets:
 - Keep density and truecolor half-block under 5 ms for `400x240 -> 80x30`.
 - Keep glyph-structure optimization evidence tied to both benchmark rows and slash-line quality smoke tests.
 - Keep decode time separate from core render time.
+- Keep real-image decode attribution in `THIRD_PARTY_NOTICES.md`; the current PNG/JPEG CLI/tool adapter uses `zigimg`.
 
 ## Span Precompute Comparison
 
@@ -346,3 +347,19 @@ color-bars-half-truecolor,partition,half_1x2,truecolor,direct_box,13x5,19.612,0.
 shape-glyph-tone,glyph_tone,density_1x1,none,span_precompute,16x8,12.812,0.8368,1.0000,n/a
 low-contrast-glyph-structure,glyph_structure,density_1x1,none,span_precompute,8x4,6.359,0.0042,-0.0673,n/a
 ```
+
+## Real Image Smoke
+
+`bench/results/real-image-smoke.json` is a narrow CLI/tool adapter smoke, not a
+core render benchmark. When the benchmark command is invoked with that output
+path, it still prints the regular synthetic benchmark CSV to stdout and writes a
+JSON artifact over small PNG/JPEG fixtures:
+
+```sh
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/real-image-smoke.json
+```
+
+The smoke rows track the adapter, source format, decoded dimensions, original
+decoded pixel format, render mode, sampler policy, PSNR, SSIM, edge correlation,
+and status. Metrics are soft for now; non-finite metrics fail the command.
+Decode time remains separate from renderer kernel timing.

@@ -565,21 +565,24 @@ Purpose: make the CLI practical while preserving the raw-pixel core.
 ### Files
 
 ```text
-adapters/zigimg.zig or adapters/zignal.zig
+test_support/image_loader.zig
 src/cli.zig
+tools/render_compare.zig
+bench/main.zig
 README.md
 ```
 
 ### Tasks
 
 - Pick optional decoder strategy:
-  - `zigimg`,
-  - `zignal`,
-  - or stb-based adapter.
-- Keep adapter optional in `build.zig.zon`.
-- Add CLI image loading for PNG/JPEG/GIF still frames as supported by the adapter.
+  - `zigimg` selected first for PNG/JPEG CLI input,
+  - keep `zstbi` as the fallback candidate if future JPEG coverage or simplicity demands it,
+  - do not hand-roll JPEG; direct PNG/JPEG parsing is out of this slice.
+- Keep adapter dependency out of `src/root.zig` and core modules.
+- Add CLI image loading for PNG/JPEG still frames as supported by the adapter.
 - Preserve raw RGBA path for tests and embedders.
 - Document dependency boundaries.
+- Add small real-image smoke fixtures and `bench/results/real-image-smoke.json`.
 - Add examples:
   - render image to terminal,
   - write output text file,
@@ -589,6 +592,8 @@ README.md
 
 - CLI is useful on real images.
 - Core package remains dependency-light and decoder-free.
+- PPM/PAM fixture behavior remains unchanged.
+- Real-image smoke fixtures decode and produce finite quality metrics.
 
 ## GitHub Launch Plan
 
@@ -736,12 +741,12 @@ Must include:
 - Package name: `ascii-render`, `image-to-ascii`, or another Zig module name.
 - Whether `RenderMode.braille` should be separate from `PartitionKind.octant_2x4` long term.
 - Whether ANSI 16/256 support belongs in `v0.1.0` or after truecolor is stable.
-- Which optional decoder adapter to use first.
+- Which optional decoder adapter to use first. Answer: `zigimg`, with `zstbi` as fallback if JPEG coverage becomes the
+  limiting factor.
 - Which font rasterizer to use in `tools/` for calibration and quality metrics.
 
 ## Immediate Next Actions
 
-1. Compare PNG/JPEG adapter options while keeping decoder dependencies outside core.
-2. Add TUI adapter integration notes for `RenderWorkspace` plus frame diffs.
-3. Continue glyph-structure scoring work only after the next profiling run identifies candidate scoring, not sampling, as the bottleneck.
-4. Expand the corpus only when a new renderer mode or real-image adapter exposes uncovered failure cases.
+1. Add TUI adapter integration notes for `RenderWorkspace` plus frame diffs.
+2. Continue glyph-structure scoring work only after the next profiling run identifies candidate scoring, not sampling, as the bottleneck.
+3. Expand the corpus only when a new renderer mode or real-image adapter exposes uncovered failure cases.

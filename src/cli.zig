@@ -1,6 +1,6 @@
 const std = @import("std");
 const ascii = @import("image_to_ascii");
-const ppm = @import("ppm_support");
+const image_loader = @import("image_loader");
 const Io = std.Io;
 
 const CliOptions = struct {
@@ -56,10 +56,13 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn renderSelected(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options: CliOptions) !void {
-    const image = if (options.input_path) |path|
-        try loadInput(io, allocator, path)
-    else
-        try makeSynthetic(allocator, options.synthetic, 96, 48);
+    var loaded: ?image_loader.LoadedImage = null;
+    defer if (loaded) |*image| image.deinit(allocator);
+
+    const image = if (options.input_path) |path| blk: {
+        loaded = try image_loader.loadPath(io, allocator, path);
+        break :blk loaded.?.imageView();
+    } else try makeSynthetic(allocator, options.synthetic, 96, 48);
 
     try renderImage(writer, allocator, image, options);
 }
@@ -83,11 +86,6 @@ fn renderImage(writer: *std.Io.Writer, allocator: std.mem.Allocator, image: asci
             .invert = options.invert,
         },
     );
-}
-
-fn loadInput(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !ascii.ImageView {
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(16 * 1024 * 1024));
-    return ppm.decode(allocator, bytes);
 }
 
 fn parseArgs(args: []const []const u8) !CliOptions {
@@ -262,11 +260,13 @@ fn describeCliError(err: anyerror) []const u8 {
         error.InvalidDither => "dither must be none, ordered-2x2, or ordered-4x4",
         error.InvalidDimension => "width and height must be positive integers",
         error.UnknownArgument => "unknown argument",
-        ppm.DecodeError.UnsupportedFormat => "input file must be P3/P6 PPM or P7 PAM",
-        ppm.DecodeError.InvalidHeader => "input image header is invalid",
-        ppm.DecodeError.InvalidDimensions => "input image dimensions are invalid",
-        ppm.DecodeError.InvalidMaxValue => "input image max value must be 255",
-        ppm.DecodeError.InvalidRaster => "input image raster data is invalid or incomplete",
+        image_loader.DecodeError.UnsupportedFormat => "input file must be P3/P6 PPM, P7 PAM, PNG, or JPEG",
+        image_loader.DecodeError.UnsupportedPixelFormat => "decoded image has an unsupported pixel format",
+        image_loader.DecodeError.ImageTooLarge => "decoded image dimensions are too large",
+        error.InvalidHeader => "input image header is invalid",
+        error.InvalidDimensions => "input image dimensions are invalid",
+        error.InvalidMaxValue => "input image max value must be 255",
+        error.InvalidRaster => "input image raster data is invalid or incomplete",
         error.FileNotFound => "input file was not found",
         error.StreamTooLong => "input file is too large",
         ascii.Error.UnsupportedColorMode => "ANSI 16 and 256 color output are not implemented yet; use none or truecolor",
@@ -280,7 +280,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\usage: image-to-ascii [options]
         \\
         \\options:
-        \\  --input path.ppm|path.pam
+        \\  --input path.ppm|path.pam|path.png|path.jpg|path.jpeg
         \\  --synthetic gradient|checkerboard|color-bars
         \\  --width N
         \\  --height N
