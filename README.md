@@ -45,6 +45,7 @@ zig build bench
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 ```
 
 ## Examples
@@ -95,6 +96,27 @@ var frame = try ascii.renderPreparedToCells(
 defer frame.deinit(allocator);
 ```
 
+Reuse output and render-shape scratch for repeated same-shape renders:
+
+```zig
+var workspace: ascii.RenderWorkspace = .empty;
+defer workspace.deinit(allocator);
+
+try ascii.renderIntoWorkspace(
+    &workspace,
+    allocator,
+    image_view,
+    .{ .columns = 80, .rows = 24, .color = .truecolor },
+    .{ .mode = .glyph_structure },
+);
+
+const frame = workspace.frame;
+_ = frame;
+```
+
+`PreparedImage` owns source-derived precompute such as integral-luma tables. `RenderWorkspace` owns reusable output and
+render-shape scratch such as `Frame` buffers and `SamplePlan` spans.
+
 ## Current Status
 
 Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling
@@ -104,12 +126,14 @@ glyph-structure rendering, ordered
 dithering, a configurable representative-color solve for two-color symbol families (`Options.color_stat`:
 `mean`/`trimmed_mean`/`median`), a selectable sampling strategy (`Options.sample_strategy`: `auto`/`direct_box`/
 `integral_luma`), tuned source sampling span precomputation (`AxisSpan`/`SamplePlan`) for render-shape-specific direct-box
-sampling, reusable `PreparedImage` luma precomputation for TUI resize loops, a fast hand-rolled ANSI writer with SGR
-coalescing, a synthetic-image CLI, PPM/PAM fixture input, and a render-kernel benchmark with CSV output plus tracked JSON
-baseline artifacts. `auto` uses spans for density, glyph-tone, glyph-structure, quadrant mono, and Braille truecolor, but
-keeps direct-box for half-block, quadrant truecolor, and Braille mono; explicit `integral_luma` and prepared integral
-reuse do not build span arrays. Span sampling is covered against the old direct sampler with a `0.0001` float epsilon. The
-hot path uses a compile-time sRGB→linear lookup table; rendering is ~8× faster than the initial baseline.
+sampling, reusable `PreparedImage` luma precomputation for TUI resize loops, reusable `RenderWorkspace` frame/scratch
+memory for repeated renders, a fast hand-rolled ANSI writer with SGR coalescing, a synthetic-image CLI, PPM/PAM fixture
+input, and a render-kernel benchmark with CSV output plus tracked JSON baseline artifacts. `auto` uses spans for density,
+glyph-tone, glyph-structure, quadrant mono, and Braille truecolor, but keeps direct-box for half-block, quadrant truecolor,
+and Braille mono; explicit `integral_luma` and prepared integral reuse do not build span arrays. Span sampling is covered
+against the old direct sampler with a `0.0001` float epsilon. Repeated workspace benchmarks show zero steady-state
+allocations after the first same-shape render. The hot path uses a compile-time sRGB→linear lookup table; rendering is
+~8× faster than the initial baseline.
 
 A quality harness lives under `tools/` (`zig build compare`): it renders an image, reconstructs it from the emitted
 cells (tonal glyphs as a coverage blend, block/Braille by exact masks, `glyph_structure` by calibrated ASCII masks), and

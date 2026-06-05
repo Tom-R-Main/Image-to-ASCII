@@ -60,6 +60,17 @@
   keeps a strong win (-22.07%), and prepared integral-luma drops its span-plan
   allocation and improves vs the forced-span artifact (-17.56%) while remaining
   slightly above the older baseline in this run.
+- Added `RenderWorkspace`, `renderIntoWorkspace`, and
+  `renderPreparedIntoWorkspace` for repeated-render reuse. The ergonomic
+  `renderToCells` and `renderPreparedToCells` wrappers now move a frame out of an
+  internal workspace, preserving public API behavior while exposing a no-realloc
+  path for TUIs. `RenderWorkspace` owns only output/render-shape memory (`Frame`
+  buffers and `SamplePlan` spans); source-derived precompute remains owned by
+  `PreparedImage`. The repeated-render benchmark writes
+  `bench/results/workspace-reuse.json` and records first-render vs steady-state
+  allocation counts/bytes. Current workspace rows reach zero steady-state
+  allocations for same-shape renders, including prepared integral-luma reuse
+  without span construction.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

@@ -174,11 +174,54 @@ pub const Frame = struct {
     fg: []Rgb8,
     bg: []Rgb8,
 
+    pub const empty = Frame{
+        .columns = 0,
+        .rows = 0,
+        .color = .none,
+        .codepoints = @constCast(&[_]u21{}),
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+
+    pub fn ensureCapacity(self: *Frame, allocator: std.mem.Allocator, columns: u32, rows: u32, color_mode: ColorMode) !void {
+        const len = try std.math.mul(usize, columns, rows);
+        const color_len = if (color_mode == .none) 0 else len;
+
+        if (self.codepoints.len != len) {
+            self.codepoints = try allocator.realloc(self.codepoints, len);
+        }
+
+        if (self.fg.len != color_len) {
+            self.fg = try allocator.realloc(self.fg, color_len);
+        }
+
+        if (self.bg.len != color_len) {
+            self.bg = try allocator.realloc(self.bg, color_len);
+        }
+
+        self.columns = columns;
+        self.rows = rows;
+        self.color = color_mode;
+    }
+
     pub fn deinit(self: *Frame, allocator: std.mem.Allocator) void {
         allocator.free(self.codepoints);
         allocator.free(self.fg);
         allocator.free(self.bg);
-        self.* = undefined;
+        self.* = .empty;
+    }
+};
+
+pub const RenderWorkspace = struct {
+    frame: Frame = .empty,
+    sample_plan: SamplePlan = .empty,
+
+    pub const empty = RenderWorkspace{};
+
+    pub fn deinit(self: *RenderWorkspace, allocator: std.mem.Allocator) void {
+        self.frame.deinit(allocator);
+        self.sample_plan.deinit(allocator);
+        self.* = .empty;
     }
 };
 
@@ -221,10 +264,15 @@ pub fn renderToCells(
     terminal: TerminalProfile,
     options: Options,
 ) !Frame {
-    try validateInputs(image, terminal, options);
-    try validateSupportedColor(terminal.color);
+    var workspace: RenderWorkspace = .empty;
+    errdefer workspace.deinit(allocator);
 
-    return renderToCellsWithContext(allocator, image, terminal, options, .{});
+    try renderIntoWorkspace(&workspace, allocator, image, terminal, options);
+
+    const frame = workspace.frame;
+    workspace.frame = .empty;
+    workspace.sample_plan.deinit(allocator);
+    return frame;
 }
 
 pub fn prepareImage(
@@ -255,32 +303,64 @@ pub fn renderPreparedToCells(
     terminal: TerminalProfile,
     options: Options,
 ) !Frame {
+    var workspace: RenderWorkspace = .empty;
+    errdefer workspace.deinit(allocator);
+
+    try renderPreparedIntoWorkspace(&workspace, allocator, prepared, terminal, options);
+
+    const frame = workspace.frame;
+    workspace.frame = .empty;
+    workspace.sample_plan.deinit(allocator);
+    return frame;
+}
+
+pub fn renderIntoWorkspace(
+    workspace: *RenderWorkspace,
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !void {
+    try validateInputs(image, terminal, options);
+    try validateSupportedColor(terminal.color);
+
+    try renderIntoWorkspaceWithContext(workspace, allocator, image, terminal, options, .{});
+}
+
+pub fn renderPreparedIntoWorkspace(
+    workspace: *RenderWorkspace,
+    allocator: std.mem.Allocator,
+    prepared: *const PreparedImage,
+    terminal: TerminalProfile,
+    options: Options,
+) !void {
     try validateInputs(prepared.image, terminal, options);
     try validateSupportedColor(terminal.color);
 
-    return renderToCellsWithContext(allocator, prepared.image, terminal, options, .{
+    try renderIntoWorkspaceWithContext(workspace, allocator, prepared.image, terminal, options, .{
         .luma_sat = prepared.integralFor(terminal, options),
     });
 }
 
-fn renderToCellsWithContext(
+fn renderIntoWorkspaceWithContext(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     return switch (options.mode) {
-        .density => renderDensity(allocator, image, terminal, options, context),
+        .density => renderDensity(workspace, allocator, image, terminal, options, context),
         .partition => switch (options.partition) {
-            .density_1x1 => renderDensity(allocator, image, terminal, options, context),
-            .half_1x2 => renderHalfBlock(allocator, image, terminal, options),
-            .quadrant_2x2 => renderQuadrant(allocator, image, terminal, options, context),
+            .density_1x1 => renderDensity(workspace, allocator, image, terminal, options, context),
+            .half_1x2 => renderHalfBlock(workspace, allocator, image, terminal, options),
+            .quadrant_2x2 => renderQuadrant(workspace, allocator, image, terminal, options, context),
             else => Error.UnsupportedRenderMode,
         },
-        .braille => renderBraille(allocator, image, terminal, options, context),
-        .glyph_tone => renderGlyphTone(allocator, image, terminal, options, context),
-        .glyph_structure => renderGlyphStructure(allocator, image, terminal, options, context),
+        .braille => renderBraille(workspace, allocator, image, terminal, options, context),
+        .glyph_tone => renderGlyphTone(workspace, allocator, image, terminal, options, context),
+        .glyph_structure => renderGlyphStructure(workspace, allocator, image, terminal, options, context),
     };
 }
 
@@ -324,30 +404,6 @@ fn validateSupportedColor(color_mode: ColorMode) RenderError!void {
         .none, .truecolor => {},
         .ansi16, .ansi256 => return Error.UnsupportedColorMode,
     }
-}
-
-fn allocFrame(allocator: std.mem.Allocator, columns: u32, rows: u32, color_mode: ColorMode) !Frame {
-    const len = try std.math.mul(usize, columns, rows);
-    errdefer {}
-
-    const codepoints = try allocator.alloc(u21, len);
-    errdefer allocator.free(codepoints);
-
-    const color_len = if (color_mode == .none) 0 else len;
-    const fg = try allocator.alloc(Rgb8, color_len);
-    errdefer allocator.free(fg);
-
-    const bg = try allocator.alloc(Rgb8, color_len);
-    errdefer allocator.free(bg);
-
-    return .{
-        .columns = columns,
-        .rows = rows,
-        .color = color_mode,
-        .codepoints = codepoints,
-        .fg = fg,
-        .bg = bg,
-    };
 }
 
 /// Build an integral-luma table for the monochrome hot path when it is worth it.
@@ -398,21 +454,21 @@ fn supportsIntegralLuma(mode: RenderMode, partition: PartitionKind) bool {
     };
 }
 
-fn maybeBuildSamplePlan(
+fn ensureWorkspaceSamplePlan(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     mapping: sample.Mapping,
     subcells_x: u32,
     subcells_y: u32,
     policy: SamplerPolicy,
-) !?sample.SamplePlan {
-    if (policy != .span_precompute) return null;
-    return try sample.SamplePlan.init(allocator, image, mapping, subcells_x, subcells_y);
+) !void {
+    if (policy != .span_precompute) return;
+    try workspace.sample_plan.ensure(allocator, image, mapping, subcells_x, subcells_y);
 }
 
-fn samplePlanPtr(plan: *const ?sample.SamplePlan) ?*const sample.SamplePlan {
-    if (plan.*) |*p| return p;
-    return null;
+fn workspaceSamplePlanPtr(workspace: *const RenderWorkspace, policy: SamplerPolicy) ?*const sample.SamplePlan {
+    return if (policy == .span_precompute) &workspace.sample_plan else null;
 }
 
 inline fn sampleCell(
@@ -455,19 +511,19 @@ inline fn sampleCellLuma(
 }
 
 fn renderDensity(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, context);
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, 1, 1, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 1, 1, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -498,7 +554,7 @@ fn renderDensity(
                 frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
             }
         }
-        return frame;
+        return;
     }
 
     var row: u32 = 0;
@@ -522,23 +578,23 @@ fn renderDensity(
         }
     }
 
-    return frame;
+    return;
 }
 
 fn renderGlyphTone(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, context);
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, 1, 1, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 1, 1, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -570,7 +626,7 @@ fn renderGlyphTone(
                 frame.codepoints[idx] = atlas.selectByTone(adjusted);
             }
         }
-        return frame;
+        return;
     }
 
     var row: u32 = 0;
@@ -594,23 +650,23 @@ fn renderGlyphTone(
         }
     }
 
-    return frame;
+    return;
 }
 
 fn renderGlyphStructure(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, context);
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, glyph.cell_width, glyph.cell_height, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, glyph.cell_width, glyph.cell_height, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -628,29 +684,29 @@ fn renderGlyphStructure(
             frame.codepoints[idx] = selected.codepoint;
 
             if (frame.color != .none) {
-                assignGlyphStructureColors(&frame, idx, image, terminal, mapping, plan, col, row, selected, options);
+                assignGlyphStructureColors(frame, idx, image, terminal, mapping, plan, col, row, selected, options);
             }
         }
     }
 
-    return frame;
+    return;
 }
 
 fn renderHalfBlock(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
-) !Frame {
+) !void {
     if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
 
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, .{});
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, 1, 2, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 1, 2, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
@@ -670,25 +726,25 @@ fn renderHalfBlock(
         }
     }
 
-    return frame;
+    return;
 }
 
 fn renderQuadrant(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
 
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, context);
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, 2, 2, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 2, 2, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -732,32 +788,32 @@ fn renderQuadrant(
 
             frame.codepoints[idx] = symbol.quadrantCodepoint(mask);
             if (frame.color != .none) {
-                assignPartitionColors(&frame, idx, &samples, mask, options.color_stat);
+                assignPartitionColors(frame, idx, &samples, mask, options.color_stat);
             }
         }
     }
 
-    return frame;
+    return;
 }
 
 fn renderBraille(
+    workspace: *RenderWorkspace,
     allocator: std.mem.Allocator,
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
     context: RenderContext,
-) !Frame {
+) !void {
     if (terminal.symbols == .ascii_only or terminal.symbols == .block_basic or terminal.symbols == .block_legacy) {
         return Error.UnsupportedRenderMode;
     }
 
     const mapping = sample.fitMapping(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
-    errdefer frame.deinit(allocator);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
     const policy = renderSamplerPolicy(options, terminal, context);
-    var plan_opt = try maybeBuildSamplePlan(allocator, image, mapping, 2, 4, policy);
-    defer if (plan_opt) |*plan| plan.deinit(allocator);
-    const plan = samplePlanPtr(&plan_opt);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 2, 4, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -807,7 +863,7 @@ fn renderBraille(
         }
     }
 
-    return frame;
+    return;
 }
 
 fn rampCodepoint(ramp: []const u8, value: f32) u21 {
@@ -1220,6 +1276,58 @@ fn eqlRgba(a: Rgba8, b: Rgba8) bool {
     return a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a;
 }
 
+const CountingAllocator = struct {
+    child: std.mem.Allocator,
+    alloc_count: usize = 0,
+    bytes_allocated: usize = 0,
+
+    fn allocator(self: *CountingAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    fn reset(self: *CountingAllocator) void {
+        self.alloc_count = 0;
+        self.bytes_allocated = 0;
+    }
+
+    const vtable = std.mem.Allocator.VTable{
+        .alloc = alloc,
+        .resize = resize,
+        .remap = remap,
+        .free = free,
+    };
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        const ptr = self.child.rawAlloc(len, alignment, ret_addr);
+        if (ptr != null) {
+            self.alloc_count += 1;
+            self.bytes_allocated += len;
+        }
+        return ptr;
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        return self.child.rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        const ptr = self.child.rawRemap(memory, alignment, new_len, ret_addr);
+        if (ptr != null and new_len > memory.len) {
+            self.alloc_count += 1;
+            self.bytes_allocated += new_len - memory.len;
+        }
+        return ptr;
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ret_addr);
+    }
+};
+
 test "validates image dimensions" {
     const pixels = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
 
@@ -1604,6 +1712,92 @@ test "prepared integral_luma render matches direct render" {
     defer reused.deinit(allocator);
 
     try std.testing.expectEqualSlices(u21, direct.codepoints, reused.codepoints);
+}
+
+test "render workspace matches renderToCells output" {
+    const allocator = std.testing.allocator;
+
+    var pixels: [8 * 8]Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 8);
+        const y: u8 = @intCast(i / 8);
+        p.* = .{ .r = x * 30, .g = y * 30, .b = 120, .a = 255 };
+    }
+    const image = ImageView{ .width = 8, .height = 8, .stride = 8 * @sizeOf(Rgba8), .pixels = &pixels };
+    const terminal = TerminalProfile{ .columns = 4, .rows = 4, .color = .truecolor };
+    const options = Options{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch };
+
+    var expected = try renderToCells(allocator, image, terminal, options);
+    defer expected.deinit(allocator);
+
+    var workspace: RenderWorkspace = .empty;
+    defer workspace.deinit(allocator);
+    try renderIntoWorkspace(&workspace, allocator, image, terminal, options);
+
+    try std.testing.expectEqual(expected.columns, workspace.frame.columns);
+    try std.testing.expectEqual(expected.rows, workspace.frame.rows);
+    try std.testing.expectEqual(expected.color, workspace.frame.color);
+    try std.testing.expectEqualSlices(u21, expected.codepoints, workspace.frame.codepoints);
+    try std.testing.expectEqualSlices(Rgb8, expected.fg, workspace.frame.fg);
+    try std.testing.expectEqualSlices(Rgb8, expected.bg, workspace.frame.bg);
+}
+
+test "render workspace reuses frame and sample plan allocations" {
+    var counting = CountingAllocator{ .child = std.testing.allocator };
+    const allocator = counting.allocator();
+
+    var pixels: [16 * 16]Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 16);
+        const y: u8 = @intCast(i / 16);
+        p.* = .{ .r = x * 12, .g = y * 12, .b = 90, .a = 255 };
+    }
+    const image = ImageView{ .width = 16, .height = 16, .stride = 16 * @sizeOf(Rgba8), .pixels = &pixels };
+    const terminal = TerminalProfile{ .columns = 8, .rows = 4, .color = .truecolor };
+    const options = Options{ .mode = .density, .fit = .stretch };
+
+    var workspace: RenderWorkspace = .empty;
+    defer workspace.deinit(allocator);
+
+    try renderIntoWorkspace(&workspace, allocator, image, terminal, options);
+    try std.testing.expect(counting.alloc_count > 0);
+    try std.testing.expect(workspace.sample_plan.x_spans.len > 0);
+
+    counting.reset();
+    try renderIntoWorkspace(&workspace, allocator, image, terminal, options);
+    try std.testing.expectEqual(@as(usize, 0), counting.alloc_count);
+    try std.testing.expectEqual(@as(usize, 0), counting.bytes_allocated);
+}
+
+test "prepared render workspace does not allocate spans for integral reuse" {
+    var counting = CountingAllocator{ .child = std.testing.allocator };
+    const allocator = counting.allocator();
+
+    var pixels: [8 * 8]Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 8);
+        p.* = .{ .r = x * 20, .g = x * 10, .b = 40, .a = 255 };
+    }
+    const image = ImageView{ .width = 8, .height = 8, .stride = 8 * @sizeOf(Rgba8), .pixels = &pixels };
+    const terminal = TerminalProfile{ .columns = 4, .rows = 4, .color = .none };
+    const options = Options{ .mode = .density, .fit = .stretch, .sample_strategy = .integral_luma };
+
+    var prepared = try prepareImage(allocator, image, terminal, .{ .sample_strategy = .integral_luma });
+    defer prepared.deinit(allocator);
+
+    var workspace: RenderWorkspace = .empty;
+    defer workspace.deinit(allocator);
+
+    counting.reset();
+    try renderPreparedIntoWorkspace(&workspace, allocator, &prepared, terminal, options);
+    try std.testing.expect(counting.alloc_count > 0);
+    try std.testing.expectEqual(@as(usize, 0), workspace.sample_plan.x_spans.len);
+    try std.testing.expectEqual(@as(usize, 0), workspace.sample_plan.y_spans.len);
+
+    counting.reset();
+    try renderPreparedIntoWorkspace(&workspace, allocator, &prepared, terminal, options);
+    try std.testing.expectEqual(@as(usize, 0), counting.alloc_count);
+    try std.testing.expectEqual(@as(usize, 0), counting.bytes_allocated);
 }
 
 test "auto sampler policy keeps known span regressions on direct box" {

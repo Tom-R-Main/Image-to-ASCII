@@ -3,7 +3,15 @@ const builtin = @import("builtin");
 const ascii = @import("image_to_ascii");
 
 const Synthetic = enum { gradient, checkerboard, color_mix };
-const BenchKind = enum { render, render_prepared, render_writer, ansi_encode_only, quality_compare_only };
+const BenchKind = enum {
+    render,
+    render_prepared,
+    render_writer,
+    ansi_encode_only,
+    quality_compare_only,
+    workspace_repeat,
+    prepared_workspace_repeat,
+};
 
 const BenchCase = struct {
     name: []const u8,
@@ -37,6 +45,10 @@ const BenchResult = struct {
     ns_per_cell: u64,
     cells_per_sec: u64,
     allocated_bytes: u64,
+    allocations_first_render: usize = 0,
+    allocations_steady_state: usize = 0,
+    bytes_allocated_first_render: usize = 0,
+    bytes_allocated_steady_state: usize = 0,
     ansi_bytes: u64,
 };
 
@@ -57,6 +69,12 @@ const cases = [_]BenchCase{
     .{ .name = "render-writer-half-truecolor", .kind = .render_writer, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor },
     .{ .name = "ansi-encode-only", .kind = .ansi_encode_only, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor },
     .{ .name = "quality-compare-only", .kind = .quality_compare_only, .mode = .density, .partition = .density_1x1, .color = .none },
+    .{ .name = "workspace-density-none-repeat", .kind = .workspace_repeat, .mode = .density, .partition = .density_1x1, .color = .none },
+    .{ .name = "workspace-density-truecolor-repeat", .kind = .workspace_repeat, .mode = .density, .partition = .density_1x1, .color = .truecolor },
+    .{ .name = "workspace-half-truecolor-repeat", .kind = .workspace_repeat, .mode = .partition, .partition = .half_1x2, .color = .truecolor },
+    .{ .name = "workspace-glyph-structure-none-repeat", .kind = .workspace_repeat, .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .none },
+    .{ .name = "workspace-glyph-structure-truecolor-repeat", .kind = .workspace_repeat, .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .truecolor },
+    .{ .name = "prepared-workspace-density-integral-repeat", .kind = .prepared_workspace_repeat, .mode = .density, .partition = .density_1x1, .color = .none, .sample_strategy = .integral_luma },
 };
 
 const in_w = 400;
@@ -92,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
 
     var results: [cases.len]BenchResult = undefined;
 
-    try stdout.writeAll("case,policy,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,ansi_bytes\n");
+    try stdout.writeAll("case,policy,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,allocs_first,allocs_steady,bytes_first,bytes_steady,ansi_bytes\n");
     for (cases, 0..) |bench_case, idx| {
         const image = switch (bench_case.synthetic) {
             .gradient => gradient,
@@ -147,6 +165,10 @@ fn runCase(
         .dither = bench_case.dither,
         .sample_strategy = bench_case.sample_strategy,
     };
+
+    if (bench_case.kind == .workspace_repeat or bench_case.kind == .prepared_workspace_repeat) {
+        return runWorkspaceCase(io, allocator, image, terminal, options, bench_case);
+    }
 
     var prepared: ?ascii.PreparedImage = null;
     defer if (prepared) |*p| p.deinit(allocator);
@@ -205,6 +227,88 @@ fn runCase(
     };
 }
 
+fn runWorkspaceCase(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    image: ascii.ImageView,
+    terminal: ascii.TerminalProfile,
+    options: ascii.Options,
+    bench_case: BenchCase,
+) !BenchResult {
+    var prepared: ?ascii.PreparedImage = null;
+    defer if (prepared) |*p| p.deinit(allocator);
+    if (bench_case.kind == .prepared_workspace_repeat) {
+        prepared = try ascii.prepareImage(allocator, image, terminal, .{ .sample_strategy = bench_case.sample_strategy });
+    }
+
+    const prepared_integral = if (prepared) |p| p.luma_sat != null else false;
+    const sampler_policy = ascii.resolveSamplerPolicy(options, terminal, prepared_integral);
+
+    var counting = BenchCountingAllocator{ .child = allocator };
+    const counting_allocator = counting.allocator();
+
+    var workspace: ascii.RenderWorkspace = .empty;
+    defer workspace.deinit(counting_allocator);
+
+    if (prepared) |*p| {
+        try ascii.renderPreparedIntoWorkspace(&workspace, counting_allocator, p, terminal, options);
+    } else {
+        try ascii.renderIntoWorkspace(&workspace, counting_allocator, image, terminal, options);
+    }
+    const first_allocs = counting.alloc_count;
+    const first_bytes = counting.bytes_allocated;
+
+    counting.reset();
+
+    var timings: [iterations]u64 = undefined;
+    var total_ns: u64 = 0;
+    var i: u64 = 0;
+    while (i < iterations) : (i += 1) {
+        const start = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        if (prepared) |*p| {
+            try ascii.renderPreparedIntoWorkspace(&workspace, counting_allocator, p, terminal, options);
+        } else {
+            try ascii.renderIntoWorkspace(&workspace, counting_allocator, image, terminal, options);
+        }
+        const end = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        const elapsed: u64 = @intCast(end - start);
+        timings[@intCast(i)] = elapsed;
+        total_ns += elapsed;
+    }
+
+    insertionSortU64(&timings);
+
+    const ns_per_iter = total_ns / iterations;
+    const cells = @as(u64, out_w) * out_h;
+    return .{
+        .name = bench_case.name,
+        .kind = bench_case.kind,
+        .synthetic = bench_case.synthetic,
+        .mode = bench_case.mode,
+        .partition = bench_case.partition,
+        .color = bench_case.color,
+        .dither = bench_case.dither,
+        .sample_strategy = bench_case.sample_strategy,
+        .sampler_policy = sampler_policy,
+        .input_width = in_w,
+        .input_height = in_h,
+        .output_columns = out_w,
+        .output_rows = out_h,
+        .iterations = iterations,
+        .ns_per_iter = ns_per_iter,
+        .median_ns = timings[timings.len / 2],
+        .p95_ns = timings[(timings.len * 95 + 99) / 100 - 1],
+        .ns_per_cell = ns_per_iter / cells,
+        .cells_per_sec = if (ns_per_iter == 0) 0 else (cells * std.time.ns_per_s) / ns_per_iter,
+        .allocated_bytes = first_bytes,
+        .allocations_first_render = first_allocs,
+        .allocations_steady_state = counting.alloc_count,
+        .bytes_allocated_first_render = first_bytes,
+        .bytes_allocated_steady_state = counting.bytes_allocated,
+        .ansi_bytes = 0,
+    };
+}
+
 fn runOnce(
     allocator: std.mem.Allocator,
     image: ascii.ImageView,
@@ -241,6 +345,7 @@ fn runOnce(
             std.mem.doNotOptimizeAway(score);
             return 0;
         },
+        .workspace_repeat, .prepared_workspace_repeat => unreachable,
     }
 }
 
@@ -255,7 +360,7 @@ fn qualityProxy(frame: ascii.Frame) u64 {
 
 fn allocatedBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
     return switch (bench_case.kind) {
-        .ansi_encode_only, .quality_compare_only => 0,
+        .ansi_encode_only, .quality_compare_only, .workspace_repeat, .prepared_workspace_repeat => 0,
         else => {
             const cells = @as(u64, columns) * rows;
             const codepoint_bytes = cells * @sizeOf(u21);
@@ -308,7 +413,7 @@ fn insertionSortU64(values: []u64) void {
 }
 
 fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
-    try writer.print("{s},{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+    try writer.print("{s},{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
         result.name,
         @tagName(result.sampler_policy),
         result.input_width,
@@ -322,6 +427,10 @@ fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
         result.ns_per_cell,
         result.cells_per_sec,
         result.allocated_bytes,
+        result.allocations_first_render,
+        result.allocations_steady_state,
+        result.bytes_allocated_first_render,
+        result.bytes_allocated_steady_state,
         result.ansi_bytes,
     });
 }
@@ -347,7 +456,7 @@ fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResu
         \\    "cpu_arch": "{s}"
         \\  }},
         \\  "benchmark": {{
-        \\    "sampler": "span_tuned",
+        \\    "sampler": "workspace_reuse",
         \\    "input_width": {d},
         \\    "input_height": {d},
         \\    "output_columns": {d},
@@ -404,6 +513,10 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         \\      "ns_per_cell": {d},
         \\      "cells_per_sec": {d},
         \\      "allocated_bytes": {d},
+        \\      "allocations_first_render": {d},
+        \\      "allocations_steady_state": {d},
+        \\      "bytes_allocated_first_render": {d},
+        \\      "bytes_allocated_steady_state": {d},
         \\      "ansi_bytes": {d}
         \\    }}
     , .{
@@ -427,6 +540,10 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         result.ns_per_cell,
         result.cells_per_sec,
         result.allocated_bytes,
+        result.allocations_first_render,
+        result.allocations_steady_state,
+        result.bytes_allocated_first_render,
+        result.bytes_allocated_steady_state,
         result.ansi_bytes,
     });
 }
@@ -481,16 +598,71 @@ fn colorMixPixel(seed: *u32) ascii.Rgba8 {
     };
 }
 
+const BenchCountingAllocator = struct {
+    child: std.mem.Allocator,
+    alloc_count: usize = 0,
+    bytes_allocated: usize = 0,
+
+    fn allocator(self: *BenchCountingAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    fn reset(self: *BenchCountingAllocator) void {
+        self.alloc_count = 0;
+        self.bytes_allocated = 0;
+    }
+
+    const vtable = std.mem.Allocator.VTable{
+        .alloc = alloc,
+        .resize = resize,
+        .remap = remap,
+        .free = free,
+    };
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *BenchCountingAllocator = @ptrCast(@alignCast(ctx));
+        const ptr = self.child.rawAlloc(len, alignment, ret_addr);
+        if (ptr != null) {
+            self.alloc_count += 1;
+            self.bytes_allocated += len;
+        }
+        return ptr;
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *BenchCountingAllocator = @ptrCast(@alignCast(ctx));
+        return self.child.rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *BenchCountingAllocator = @ptrCast(@alignCast(ctx));
+        const ptr = self.child.rawRemap(memory, alignment, new_len, ret_addr);
+        if (ptr != null and new_len > memory.len) {
+            self.alloc_count += 1;
+            self.bytes_allocated += new_len - memory.len;
+        }
+        return ptr;
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *BenchCountingAllocator = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ret_addr);
+    }
+};
+
 test "bench cases include render and lab-only rows" {
     var has_ansi = false;
     var has_quality = false;
     var has_prepared = false;
+    var has_workspace = false;
     for (cases) |bench_case| {
         has_ansi = has_ansi or bench_case.kind == .ansi_encode_only;
         has_quality = has_quality or bench_case.kind == .quality_compare_only;
         has_prepared = has_prepared or bench_case.kind == .render_prepared;
+        has_workspace = has_workspace or bench_case.kind == .workspace_repeat;
     }
     try std.testing.expect(has_ansi);
     try std.testing.expect(has_quality);
     try std.testing.expect(has_prepared);
+    try std.testing.expect(has_workspace);
 }

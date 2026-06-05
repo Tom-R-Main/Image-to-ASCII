@@ -110,6 +110,14 @@ pub const SamplePlan = struct {
     x_spans: []AxisSpan,
     y_spans: []AxisSpan,
 
+    pub const empty = SamplePlan{
+        .mapping = .{ .columns = 0, .rows = 0, .src_x0 = 0.0, .src_y0 = 0.0, .src_x1 = 0.0, .src_y1 = 0.0 },
+        .subcells_x = 0,
+        .subcells_y = 0,
+        .x_spans = @constCast(&[_]AxisSpan{}),
+        .y_spans = @constCast(&[_]AxisSpan{}),
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         image: core.ImageView,
@@ -137,10 +145,36 @@ pub const SamplePlan = struct {
         };
     }
 
+    pub fn ensure(
+        self: *SamplePlan,
+        allocator: std.mem.Allocator,
+        image: core.ImageView,
+        mapping: Mapping,
+        subcells_x: u32,
+        subcells_y: u32,
+    ) !void {
+        const virtual_w = try std.math.mul(usize, mapping.columns, subcells_x);
+        const virtual_h = try std.math.mul(usize, mapping.rows, subcells_y);
+
+        if (self.x_spans.len != virtual_w) {
+            self.x_spans = try allocator.realloc(self.x_spans, virtual_w);
+        }
+
+        if (self.y_spans.len != virtual_h) {
+            self.y_spans = try allocator.realloc(self.y_spans, virtual_h);
+        }
+
+        self.mapping = mapping;
+        self.subcells_x = subcells_x;
+        self.subcells_y = subcells_y;
+        fillSpans(self.x_spans, mapping.src_x0, mapping.src_x1, image.width);
+        fillSpans(self.y_spans, mapping.src_y0, mapping.src_y1, image.height);
+    }
+
     pub fn deinit(self: *SamplePlan, allocator: std.mem.Allocator) void {
         allocator.free(self.x_spans);
         allocator.free(self.y_spans);
-        self.* = undefined;
+        self.* = .empty;
     }
 
     pub fn xSpan(self: SamplePlan, cell_x: u32, sub_x: u32) AxisSpan {

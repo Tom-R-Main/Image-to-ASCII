@@ -681,6 +681,8 @@ Must include:
 - prepared-image / render-context seam for reusable luma precomputation,
 - source sampling span precomputation benchmarked against the baseline artifact,
 - tuned auto sampler policy with per-row policy visibility in benchmark output,
+- render-workspace reuse API for frame buffers and render-shape scratch,
+- repeated-render benchmark rows with first-render and steady-state allocation counts,
 - quality ratchet hooks before more glyph tuning.
 
 ### `v0.3.0`: Glyph-Tone
@@ -736,7 +738,7 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Decide whether density mono should remain span-enabled despite noisy means or move to a direct-box auto policy.
-2. Add a render-into/frame-reuse API once the sampler hot loop is measured.
-3. Expand the quality corpus before deeper glyph-structure pruning.
-4. Keep PNG/JPEG adapter work outside core after the performance lab is stable.
+1. Add an ANSI diff writer on top of stable `Frame` output.
+2. Expand the quality corpus before deeper glyph-structure pruning.
+3. Compare PNG/JPEG adapter options while keeping decoder dependencies outside core.
+4. Continue low-level glyph scoring work only after the workspace reuse benchmark stays stable.

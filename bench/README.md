@@ -8,6 +8,7 @@ zig build bench
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 ```
 
 `bench/results/baseline.json` is intentionally tracked as the current local baseline. Generated or large benchmark corpora
@@ -25,6 +26,8 @@ The current synthetic matrix separates render kernels, prepared reuse, ANSI enco
 - glyph-structure mono and truecolor,
 - density integral-luma without prepared reuse,
 - prepared density with reused `integral_luma`,
+- repeated `RenderWorkspace` rows for density mono/truecolor, half-block
+  truecolor, glyph-structure mono/truecolor, and prepared density integral-luma,
 - full render-to-writer half-block truecolor,
 - ANSI encode only,
 - quality compare only.
@@ -35,6 +38,7 @@ The JSON artifact records:
 - input size and output cell grid,
 - iterations, mean ns/iteration, median, p95, ns/cell, and cells/sec,
 - estimated per-render allocation bytes (frame buffers plus render-shape span plans),
+- first-render and steady-state allocation counts/bytes for workspace reuse rows,
 - ANSI bytes emitted,
 - Zig version, OS, and CPU architecture.
 
@@ -157,3 +161,54 @@ quality-compare-only,span_precompute,2435,2690,10.47
 Prepared integral-luma now has the same estimated allocation as the original baseline (`9600` bytes) instead of paying for
 span arrays, and it improves by `17.56%` versus the forced-span artifact; the remaining delta against the older baseline
 is benchmark variance and the current helper structure rather than forced span construction.
+
+## RenderWorkspace Reuse
+
+`bench/results/workspace-reuse.json` records repeated-render rows for the reusable workspace API. The ownership rule is:
+
+- `PreparedImage` owns source-derived precompute such as integral-luma tables.
+- `RenderWorkspace` owns output and render-shape scratch such as `Frame` buffers and `SamplePlan` spans.
+- `Frame` is still the rendered cell result and remains movable out of a workspace by the ergonomic wrapper APIs.
+
+Compare workspace rows against the committed baseline with:
+
+```sh
+jq -r -s '
+  (.[0].results | map({key:.case, value:{ns:.ns_per_iter, bytes:.allocated_bytes}}) | from_entries) as $base |
+  .[1].results[] |
+  . as $workspace |
+  ($workspace.case
+    | sub("^workspace-"; "")
+    | sub("-repeat$"; "")
+    | sub("^prepared-workspace-density-integral$"; "prepared-density-integral-none")) as $base_key |
+  ($base[$base_key] // null) as $b |
+  select($b != null and ($workspace.case | contains("workspace"))) |
+  [
+    $workspace.case,
+    $workspace.sampler_policy,
+    $b.ns,
+    $workspace.ns_per_iter,
+    (((($workspace.ns_per_iter - $b.ns) * 10000 / $b.ns) | round) / 100),
+    $workspace.allocations_first_render,
+    $workspace.allocations_steady_state,
+    $workspace.bytes_allocated_first_render,
+    $workspace.bytes_allocated_steady_state
+  ] | @tsv
+' bench/results/baseline.json bench/results/workspace-reuse.json
+```
+
+Current workspace vs baseline:
+
+```text
+case,policy,baseline_ns,workspace_ns,delta_pct,allocs_first,allocs_steady,bytes_first,bytes_steady
+workspace-density-none-repeat,span_precompute,297263,186093,-37.40,3,0,12240,0
+workspace-density-truecolor-repeat,span_precompute,292342,209312,-28.40,5,0,26640,0
+workspace-half-truecolor-repeat,direct_box,339124,327416,-3.45,3,0,24000,0
+workspace-glyph-structure-none-repeat,span_precompute,6501429,5391356,-17.07,3,0,36480,0
+workspace-glyph-structure-truecolor-repeat,span_precompute,11767835,9822904,-16.53,5,0,50880,0
+prepared-workspace-density-integral-repeat,prepared_integral_luma,53911,54598,1.27,1,0,9600,0
+```
+
+The important invariant is the steady-state allocation count: repeated same-shape renders reuse frame buffers and, when
+the selected sampler policy uses spans, reuse the `SamplePlan` arrays as render-shape scratch. Prepared integral-luma
+reuse performs only the first `Frame` allocation and does not construct span arrays.
