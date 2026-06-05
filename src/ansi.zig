@@ -74,6 +74,54 @@ pub fn writeFrame(writer: *std.Io.Writer, frame: core.Frame) !void {
     }
 }
 
+/// Emit a bounded `viewport`-sized region of `frame`. Cells inside the frame are
+/// copied; cells outside it (when the viewport overhangs) are blank padding. With
+/// a viewport that exactly covers the frame this is byte-identical to `writeFrame`.
+pub fn writeFrameRegion(writer: *std.Io.Writer, frame: core.Frame, viewport: core.FrameViewport) !void {
+    const pad: Rgb8 = .{ .r = 0, .g = 0, .b = 0 };
+
+    var row: u32 = 0;
+    while (row < viewport.rows) : (row += 1) {
+        var current_fg: ?Rgb8 = null;
+        var current_bg: ?Rgb8 = null;
+        const sy = viewport.y + row;
+
+        var col: u32 = 0;
+        while (col < viewport.columns) : (col += 1) {
+            const sx = viewport.x + col;
+            var cp: u21 = ' ';
+            var fg = pad;
+            var bg = pad;
+            if (sx < frame.columns and sy < frame.rows) {
+                const idx = @as(usize, sy) * frame.columns + sx;
+                cp = frame.codepoints[idx];
+                if (frame.color != .none) {
+                    fg = frame.fg[idx];
+                    bg = frame.bg[idx];
+                }
+            }
+
+            if (frame.color != .none) {
+                if (current_fg == null or !eqlRgb(current_fg.?, fg)) {
+                    _ = try writeColor(writer, fg_lead, fg);
+                    current_fg = fg;
+                }
+                if (current_bg == null or !eqlRgb(current_bg.?, bg)) {
+                    _ = try writeColor(writer, bg_lead, bg);
+                    current_bg = bg;
+                }
+            }
+
+            try writer.printUnicodeCodepoint(cp);
+        }
+
+        if (frame.color != .none) {
+            try writer.writeAll(reset);
+        }
+        try writer.writeByte('\n');
+    }
+}
+
 pub fn writeFrameDiff(
     writer: *std.Io.Writer,
     previous: ?*const core.Frame,

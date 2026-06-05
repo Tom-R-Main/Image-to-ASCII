@@ -91,6 +91,10 @@ improved from 73.7us to 25.4us median and from 28 to 13 allocations. `flowchart-
 14.8us median and from 9 to 8 allocations; `flowchart-small-render` improved from 34.6us to 18.6us median and from 13 to
 11 allocations.
 
+`bench/results/diagram-viewport.json` re-captures the diagram rows after the bounded-pane (viewport) work landed; the
+viewport is a CLI/output-layer addition over the natural `Frame`, so the parse/layout/render rows are unchanged from
+`diagram-optimized.json` (same allocation counts).
+
 ## Current ReleaseFast Baseline
 
 Measured locally on 2026-06-05 with:

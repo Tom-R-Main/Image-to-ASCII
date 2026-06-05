@@ -217,6 +217,16 @@ pub const Frame = struct {
     }
 };
 
+/// A rectangular region of a `Frame`, in cells. Used to render or crop a bounded
+/// pane out of a larger (naturally-sized) frame. The region may extend past the
+/// frame; cells outside the frame are treated as blank padding.
+pub const FrameViewport = struct {
+    x: u32 = 0,
+    y: u32 = 0,
+    columns: u32,
+    rows: u32,
+};
+
 pub const RenderWorkspace = struct {
     frame: Frame = .empty,
     sample_plan: SamplePlan = .empty,

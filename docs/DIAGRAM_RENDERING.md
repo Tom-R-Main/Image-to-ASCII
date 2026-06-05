@@ -244,16 +244,43 @@ Deferred: composite states, choice/fork/join, and notes.
 
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
 routes to the flowchart, sequence, or state backend, so
-`image-to-ascii mermaid file.mmd` handles any of them.
+`cell-render mermaid file.mmd` handles any of them.
+
+## Bounded Panes (Viewport)
+
+Diagrams render to their natural size; for TUI/Siftable panes that size must be
+bounded. `src/frame_view.zig` adds renderer-agnostic primitives over any `Frame`:
+
+- `FrameViewport { x, y, columns, rows }` and `OverflowMode { allow, clip, error_if_too_large }`,
+- `frameFits(frame, columns, rows)`,
+- `renderFrameRegionToWriter(writer, frame, viewport)` — emit a bounded region as
+  ANSI (clips when the viewport is smaller, blank-pads when larger; byte-identical
+  to `renderFrameToWriter` for a full-frame viewport),
+- `cropFrameToCells(allocator, frame, viewport)` — copy a region into a new owned
+  `Frame` (e.g. to blit into a TUI buffer).
+
+There is no scaling or relayout yet — fitting is deterministic: natural → pad,
+clip from origin, or error. The CLI exposes this:
+
+```sh
+cell-render mermaid diagram.mmd --width 100 --height 30 --overflow clip
+cell-render mermaid diagram.mmd --max-width 120 --max-height 40 --overflow error
+```
+
+`--width`/`--height` fit an exact pane (pad or clip); `--max-width`/`--max-height`
+only bound (no padding); `--overflow` chooses what happens when the natural
+diagram exceeds the bounds (`error` exits non-zero with the actual vs requested
+size). With no bounds, output is natural (unchanged).
 
 ## Status and Next
 
-The `mermaid` CLI subcommand is wired (`image-to-ascii mermaid diagram.mmd
-[--ascii|--unicode] [--color none|truecolor]`); syntax errors print as
-`file:line:col: message`. Flowcharts have distinct node shapes, heavy/dotted
-strokes, and off-line edge labels; sequence diagrams cover the v0 subset above.
-Next: extend the sequence subset (notes/activations/alt-loop-opt), then add the
-next Tier-1 diagram (state or class) reusing the graph layout engine.
+The `mermaid` CLI subcommand renders flowchart, sequence, and state diagrams
+(`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
+plus the viewport flags above); syntax errors print as `file:line:col: message`.
+Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
+labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks.
+Next: a class diagram (graph-layout, reusing a compartment-node renderer) and
+richer state features.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

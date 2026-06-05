@@ -394,8 +394,19 @@ Sequence diagrams support participants/actors, all message arrows, self-messages
 alt/opt/loop/par blocks. State diagrams (`stateDiagram-v2`) support states, `[*]` start/end, and labeled transitions, and
 reuse the flowchart graph layout.
 
-Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`. Syntax errors are reported to stderr as
-`file:line:col: message` and exit non-zero — the actionable feedback an agent needs to fix generated diagrams. The
-supported subset and renderer limitations are documented under [Mermaid flowchart frontend](#mermaid-flowchart-frontend)
-and in [docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md).
+To fit a diagram into a bounded TUI pane, pass viewport flags (the built binary is `cell-render`):
+
+```sh
+# Clip the diagram into an exact 100x30 pane (pads if smaller):
+cell-render mermaid plan.mmd --width 100 --height 30 --overflow clip
+
+# Fail if the diagram doesn't fit within an upper bound:
+cell-render mermaid plan.mmd --max-width 120 --max-height 40 --overflow error
+```
+
+Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`, `--width`/`--height` (exact pane, pad or clip),
+`--max-width`/`--max-height` (bound only), `--overflow allow|clip|error`. With no viewport flags the diagram renders at
+its natural size. Syntax errors are reported to stderr as `file:line:col: message` and exit non-zero — the actionable
+feedback an agent needs to fix generated diagrams. The supported subset and renderer limitations are documented under
+[Mermaid flowchart frontend](#mermaid-flowchart-frontend) and in [docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md).
 </content>

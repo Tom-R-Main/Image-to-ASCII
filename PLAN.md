@@ -869,9 +869,11 @@ Must include:
 5. ~~Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.~~ ✅
 6. ~~Extend the sequence subset (notes, activations, alt/loop/opt).~~ ✅
 7. ~~Add the next Tier-1 diagram (state), reusing the graph layout engine.~~ ✅
-8. Add the class/ER diagram (also graph-layout) and richer state features
-   (composite states, choice/fork/join).
-9. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
-   becomes the next measured bottleneck.
+8. ~~Add diagram viewport / bounded-pane rendering (pad/clip/error) and CLI
+   pane-fit flags, so diagrams are usable inside fixed terminal/TUI panes.~~ ✅
+9. Add the class diagram (graph-layout with a reusable compartment-node renderer),
+   then ER/requirement/architecture cards on the same renderer.
+10. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+    becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

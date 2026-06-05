@@ -103,13 +103,32 @@
   median; small render drops from 13 to 11 allocations and from 34.6us to 18.6us
   median in this local ReleaseFast run.
 
+### Library
+
+- Added renderer-agnostic **bounded-pane** primitives (`src/frame_view.zig`) for
+  fitting a `Frame` into a fixed terminal/TUI pane: `FrameViewport`,
+  `OverflowMode`, `frameFits`, `renderFrameRegionToWriter` (clips/pads a region to
+  ANSI; byte-identical to `renderFrameToWriter` for a full-frame viewport), and
+  `cropFrameToCells` (copies a region into a new owned `Frame`). Fitting is
+  deterministic — natural, pad, clip-from-origin, or error — with no scaling or
+  relayout. New public API: `FrameViewport`, `OverflowMode`, `frameFits`,
+  `renderFrameRegionToWriter`, `cropFrameToCells`.
+
 ### CLI and Tooling
 
-- Added a `mermaid` CLI subcommand: `image-to-ascii mermaid <file.mmd>
-  [--ascii|--unicode] [--color none|truecolor]` reads a Mermaid flowchart and
-  writes the rendered frame to stdout. Syntax errors are reported to stderr as
-  `file:line:col: message` and exit non-zero. The diagram path stays decoder-free
-  (it reads UTF-8 text, not images), and the existing image CLI is unchanged.
+- The CLI binary is now `cell-render` (the library module stays `image_to_ascii`).
+- Added pane-fit flags to the `mermaid` subcommand: `--width`/`--height` fit an
+  exact pane (pad or clip), `--max-width`/`--max-height` only bound, and
+  `--overflow allow|clip|error` chooses behavior when the natural diagram exceeds
+  the bounds (`error` exits non-zero reporting actual vs requested size). With no
+  flags, output is natural (unchanged). `bench/results/diagram-viewport.json`
+  records the diagram benchmark with these in place.
+- Added a `mermaid` CLI subcommand: `cell-render mermaid <file.mmd>
+  [--ascii|--unicode] [--color none|truecolor]` reads a Mermaid diagram
+  (flowchart/sequence/state, auto-detected) and writes the rendered frame to
+  stdout. Syntax errors are reported to stderr as `file:line:col: message` and
+  exit non-zero. The diagram path stays decoder-free (it reads UTF-8 text, not
+  images), and the existing image CLI is unchanged.
 - Added `docs/TUI_INTEGRATION.md` with the intended live TUI embedding model:
   decoded pixels stay app-owned, `PreparedImage` owns source-derived analysis,
   `RenderWorkspace` owns output/render-shape scratch, `Frame` represents a

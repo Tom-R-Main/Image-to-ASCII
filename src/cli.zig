@@ -37,8 +37,8 @@ pub fn main(init: std.process.Init) !void {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "mermaid")) {
         runMermaid(stdout, stderr, init.io, arena, args[2..]) catch |err| {
             switch (err) {
-                // The precise file:line:col diagnostic is already on stderr.
-                error.MermaidSyntax => {},
+                // These already wrote a precise message to stderr.
+                error.MermaidSyntax, error.DiagramTooLarge => {},
                 else => try stderr.print("error: {s}\n", .{describeCliError(err)}),
             }
             try stderr.flush();
@@ -106,6 +106,12 @@ const MermaidCliOptions = struct {
     input_path: ?[]const u8 = null,
     glyph_set: ascii.GlyphSet = .unicode_box,
     color: ascii.ColorMode = .truecolor,
+    // Pane fit. `width`/`height` pad to an exact pane; `max_*` only bound.
+    width: ?u32 = null,
+    height: ?u32 = null,
+    max_width: ?u32 = null,
+    max_height: ?u32 = null,
+    overflow: ascii.OverflowMode = .clip,
 };
 
 /// `mermaid <file.mmd> [--ascii|--unicode] [--color none|truecolor]`.
@@ -143,7 +149,47 @@ fn runMermaid(
     };
     defer frame.deinit(allocator);
 
-    try ascii.renderFrameToWriter(writer, frame);
+    try emitMermaidFrame(writer, stderr, frame, options, path);
+}
+
+/// Emit the rendered frame, applying the pane-fit options. With no bounds set the
+/// frame renders at natural size (the default). `width`/`height` pad to an exact
+/// pane; `max-width`/`max-height` only bound. `overflow` decides what happens when
+/// the natural diagram exceeds the bounds.
+fn emitMermaidFrame(
+    writer: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+    frame: ascii.Frame,
+    options: MermaidCliOptions,
+    path: []const u8,
+) !void {
+    const bound_cols = options.width orelse options.max_width;
+    const bound_rows = options.height orelse options.max_height;
+
+    if (bound_cols == null and bound_rows == null) {
+        return ascii.renderFrameToWriter(writer, frame);
+    }
+
+    const too_wide = bound_cols != null and frame.columns > bound_cols.?;
+    const too_tall = bound_rows != null and frame.rows > bound_rows.?;
+    if (too_wide or too_tall) {
+        switch (options.overflow) {
+            .allow => return ascii.renderFrameToWriter(writer, frame),
+            .error_if_too_large => {
+                try stderr.print(
+                    "{s}: diagram is {d}x{d}, which exceeds the requested {d}x{d}\n",
+                    .{ path, frame.columns, frame.rows, bound_cols orelse frame.columns, bound_rows orelse frame.rows },
+                );
+                return error.DiagramTooLarge;
+            },
+            .clip => {},
+        }
+    }
+
+    // Exact pane (width/height) pads; max-* clamps to the natural size.
+    const vp_cols = options.width orelse if (options.max_width) |m| @min(frame.columns, m) else frame.columns;
+    const vp_rows = options.height orelse if (options.max_height) |m| @min(frame.rows, m) else frame.rows;
+    try ascii.renderFrameRegionToWriter(writer, frame, .{ .columns = vp_cols, .rows = vp_rows });
 }
 
 fn parseMermaidArgs(args: []const []const u8) !MermaidCliOptions {
@@ -162,6 +208,26 @@ fn parseMermaidArgs(args: []const []const u8) !MermaidCliOptions {
             i += 1;
             if (i >= args.len) return error.MissingValue;
             options.color = parseMermaidColor(args[i]) orelse return error.InvalidColor;
+        } else if (std.mem.eql(u8, arg, "--width")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.width = try parsePositiveU32(args[i]);
+        } else if (std.mem.eql(u8, arg, "--height")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.height = try parsePositiveU32(args[i]);
+        } else if (std.mem.eql(u8, arg, "--max-width")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.max_width = try parsePositiveU32(args[i]);
+        } else if (std.mem.eql(u8, arg, "--max-height")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.max_height = try parsePositiveU32(args[i]);
+        } else if (std.mem.eql(u8, arg, "--overflow")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.overflow = parseOverflow(args[i]) orelse return error.InvalidOverflow;
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.UnknownArgument;
         } else {
@@ -171,6 +237,13 @@ fn parseMermaidArgs(args: []const []const u8) !MermaidCliOptions {
     }
 
     return options;
+}
+
+fn parseOverflow(value: []const u8) ?ascii.OverflowMode {
+    if (std.mem.eql(u8, value, "allow")) return .allow;
+    if (std.mem.eql(u8, value, "clip")) return .clip;
+    if (std.mem.eql(u8, value, "error")) return .error_if_too_large;
+    return null;
 }
 
 /// The diagram renderer paints into a `CellCanvas`, which only models no-color
@@ -183,12 +256,18 @@ fn parseMermaidColor(value: []const u8) ?ascii.ColorMode {
 
 fn writeMermaidUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
-        \\usage: image-to-ascii mermaid <file.mmd> [options]
+        \\usage: cell-render mermaid <file.mmd> [options]
         \\
         \\options:
         \\  --ascii              use the ASCII fallback glyph set (+ - | > etc.)
         \\  --unicode            use box-drawing glyphs (default)
         \\  --color none|truecolor   (default truecolor)
+        \\  --width N            fit into an exact N-column pane (pads/clips)
+        \\  --height N           fit into an exact N-row pane (pads/clips)
+        \\  --max-width N        bound width to N columns (no padding)
+        \\  --max-height N       bound height to N rows (no padding)
+        \\  --overflow allow|clip|error   when the diagram exceeds the bounds
+        \\                                (default clip)
         \\  --help
         \\
         \\Renders a Mermaid subset, auto-detected from the header:
@@ -378,6 +457,8 @@ fn describeCliError(err: anyerror) []const u8 {
         error.UnexpectedArgument => "unexpected extra argument",
         error.MissingInput => "expected a path to a .mmd file",
         error.MermaidSyntax => "mermaid source has a syntax error",
+        error.InvalidOverflow => "overflow must be allow, clip, or error",
+        error.DiagramTooLarge => "diagram exceeds the requested bounds",
         image_loader.DecodeError.UnsupportedFormat => "input file must be P3/P6 PPM, P7 PAM, PNG, or JPEG",
         image_loader.DecodeError.UnsupportedPixelFormat => "decoded image has an unsupported pixel format",
         image_loader.DecodeError.ImageTooLarge => "decoded image dimensions are too large",
@@ -395,8 +476,10 @@ fn describeCliError(err: anyerror) []const u8 {
 
 fn writeUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
-        \\usage: image-to-ascii [options]
-        \\       image-to-ascii mermaid <file.mmd> [--ascii|--unicode] [--color none|truecolor]
+        \\usage: cell-render [options]
+        \\       cell-render mermaid <file.mmd> [--ascii|--unicode] [--color none|truecolor]
+        \\                                      [--width N --height N | --max-width N --max-height N]
+        \\                                      [--overflow allow|clip|error]
         \\
         \\options:
         \\  --input path.ppm|path.pam|path.png|path.jpg|path.jpeg
@@ -422,7 +505,7 @@ test "library import is available to cli" {
 
 test "parse minimal cli options" {
     const args = [_][]const u8{
-        "image-to-ascii",
+        "cell-render",
         "--synthetic",
         "checkerboard",
         "--width",
@@ -504,7 +587,7 @@ test "CLI checkerboard Braille golden output" {
 
 test "CLI accepts ansi color flags even though core rejects them for now" {
     const args = [_][]const u8{
-        "image-to-ascii",
+        "cell-render",
         "--color",
         "256",
     };
@@ -514,7 +597,7 @@ test "CLI accepts ansi color flags even though core rejects them for now" {
 
 test "CLI parses input path" {
     const args = [_][]const u8{
-        "image-to-ascii",
+        "cell-render",
         "--input",
         "testdata/diagonal.ppm",
     };
@@ -553,6 +636,85 @@ test "CLI mermaid renders a flowchart fixture" {
     try std.testing.expect(std.mem.indexOf(u8, text, ">") != null); // arrow head
     try std.testing.expect(std.mem.indexOf(u8, text, "Start") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "End") != null);
+}
+
+fn renderForViewportTest(allocator: std.mem.Allocator, src: []const u8) !ascii.Frame {
+    var diag: ?ascii.MermaidError = null;
+    return ascii.renderMermaid(allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+}
+
+/// Assert `text` (newline-terminated rows from a no-color frame) is exactly
+/// `cols` x `rows`.
+fn expectGrid(text: []const u8, cols: usize, rows: usize) !void {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var n: usize = 0;
+    while (it.next()) |line| {
+        if (n == rows) {
+            try std.testing.expectEqual(@as(usize, 0), line.len); // trailing split
+            break;
+        }
+        try std.testing.expectEqual(cols, line.len);
+        n += 1;
+    }
+    try std.testing.expectEqual(rows, n);
+}
+
+test "mermaid emit renders natural size with no bounds" {
+    var frame = try renderForViewportTest(std.testing.allocator, "flowchart LR\n A --> B\n");
+    defer frame.deinit(std.testing.allocator);
+
+    var out_buf: [4096]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err: std.Io.Writer = .fixed(&err_buf);
+    try emitMermaidFrame(&out, &err, frame, .{}, "x.mmd");
+    try expectGrid(out.buffered(), frame.columns, frame.rows);
+}
+
+test "mermaid emit clips to a bounded pane" {
+    var frame = try renderForViewportTest(std.testing.allocator, "flowchart TD\n A --> B --> C\n");
+    defer frame.deinit(std.testing.allocator);
+    try std.testing.expect(frame.rows > 4); // ensure clipping actually happens
+
+    var out_buf: [4096]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err: std.Io.Writer = .fixed(&err_buf);
+    try emitMermaidFrame(&out, &err, frame, .{ .width = 5, .height = 4, .overflow = .clip }, "x.mmd");
+    try expectGrid(out.buffered(), 5, 4);
+}
+
+test "mermaid emit pads up to an exact pane" {
+    var frame = try renderForViewportTest(std.testing.allocator, "flowchart LR\n A --> B\n");
+    defer frame.deinit(std.testing.allocator);
+
+    var out_buf: [8192]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&out_buf);
+    var err_buf: [64]u8 = undefined;
+    var err: std.Io.Writer = .fixed(&err_buf);
+    try emitMermaidFrame(&out, &err, frame, .{ .width = frame.columns + 5, .height = frame.rows + 2, .overflow = .clip }, "x.mmd");
+    try expectGrid(out.buffered(), frame.columns + 5, frame.rows + 2);
+}
+
+test "mermaid emit errors when the diagram exceeds error bounds" {
+    var frame = try renderForViewportTest(std.testing.allocator, "flowchart TD\n A --> B --> C\n");
+    defer frame.deinit(std.testing.allocator);
+
+    var out_buf: [4096]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&out_buf);
+    var err_buf: [256]u8 = undefined;
+    var err: std.Io.Writer = .fixed(&err_buf);
+    const result = emitMermaidFrame(&out, &err, frame, .{ .max_width = 4, .max_height = 4, .overflow = .error_if_too_large }, "x.mmd");
+    try std.testing.expectError(error.DiagramTooLarge, result);
+    try std.testing.expect(std.mem.indexOf(u8, err.buffered(), "exceeds") != null);
+}
+
+test "parse mermaid viewport flags" {
+    const args = [_][]const u8{ "d.mmd", "--width", "100", "--height", "30", "--overflow", "clip" };
+    const options = try parseMermaidArgs(&args);
+    try std.testing.expectEqual(@as(?u32, 100), options.width);
+    try std.testing.expectEqual(@as(?u32, 30), options.height);
+    try std.testing.expectEqual(ascii.OverflowMode.clip, options.overflow);
 }
 
 test "CLI fixture density golden output" {
