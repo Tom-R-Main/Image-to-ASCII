@@ -1,8 +1,10 @@
 const std = @import("std");
 
+const dither = @import("dither.zig");
 const luma = @import("luma.zig");
 const pixel = @import("pixel.zig");
 const sample = @import("sample.zig");
+const symbol = @import("symbol.zig");
 
 pub const Rgba8 = pixel.Rgba8;
 pub const Rgb8 = pixel.Rgb8;
@@ -160,8 +162,10 @@ pub fn renderToCells(
         .partition => switch (options.partition) {
             .density_1x1 => renderDensity(allocator, image, terminal, options),
             .half_1x2 => renderHalfBlock(allocator, image, terminal, options),
+            .quadrant_2x2 => renderQuadrant(allocator, image, terminal, options),
             else => Error.UnsupportedRenderMode,
         },
+        .braille => renderBraille(allocator, image, terminal, options),
         else => Error.UnsupportedRenderMode,
     };
 }
@@ -270,6 +274,126 @@ fn renderHalfBlock(
     return frame;
 }
 
+fn renderQuadrant(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !Frame {
+    if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
+
+    const size = sample.fittedSize(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    errdefer frame.deinit(allocator);
+
+    var row: u32 = 0;
+    while (row < size.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < size.columns) : (col += 1) {
+            const idx = @as(usize, row) * size.columns + col;
+            var samples: [4]sample.Sample = undefined;
+            var adjusted: [4]f32 = undefined;
+            var sum: f32 = 0.0;
+
+            var sy: u32 = 0;
+            while (sy < 2) : (sy += 1) {
+                var sx: u32 = 0;
+                while (sx < 2) : (sx += 1) {
+                    const sub_idx = sy * 2 + sx;
+                    const region = sample.cellRegion(image, size, col, row, 2, 2, sx, sy);
+                    samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                    adjusted[sub_idx] = luma.applyAdjustments(samples[sub_idx].luma, options.contrast, options.brightness, options.invert);
+                    sum += adjusted[sub_idx];
+                }
+            }
+
+            const avg = sum / 4.0;
+            var mask: u4 = 0;
+            for (adjusted, 0..) |value, sub_idx| {
+                const sub_x: u32 = @intCast(sub_idx % 2);
+                const sub_y: u32 = @intCast(sub_idx / 2);
+                if (value >= thresholdFor(options, col * 2 + sub_x, row * 2 + sub_y, avg)) {
+                    mask |= @as(u4, 1) << @intCast(sub_idx);
+                }
+            }
+
+            frame.codepoints[idx] = symbol.quadrantCodepoint(mask);
+            if (frame.color != .none) {
+                assignPartitionColors(&frame, idx, &samples, mask);
+            }
+        }
+    }
+
+    return frame;
+}
+
+fn renderBraille(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !Frame {
+    if (terminal.symbols == .ascii_only or terminal.symbols == .block_basic or terminal.symbols == .block_legacy) {
+        return Error.UnsupportedRenderMode;
+    }
+
+    const size = sample.fittedSize(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    errdefer frame.deinit(allocator);
+
+    const background = rgbFromBackground(terminal.background);
+
+    var row: u32 = 0;
+    while (row < size.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < size.columns) : (col += 1) {
+            const idx = @as(usize, row) * size.columns + col;
+            var mask: u8 = 0;
+            var samples: [8]sample.Sample = undefined;
+            var on_accum = sample.Sample{
+                .linear = .{ .r = 0.0, .g = 0.0, .b = 0.0 },
+                .rgb = background,
+                .luma = 0.0,
+            };
+            var on_count: u32 = 0;
+
+            var sy: u32 = 0;
+            while (sy < 4) : (sy += 1) {
+                var sx: u32 = 0;
+                while (sx < 2) : (sx += 1) {
+                    const sub_idx = sy * 2 + sx;
+                    const region = sample.cellRegion(image, size, col, row, 2, 4, sx, sy);
+                    samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                    const adjusted = luma.applyAdjustments(samples[sub_idx].luma, options.contrast, options.brightness, options.invert);
+                    if (adjusted >= dither.threshold(options.dither, col * 2 + sx, row * 4 + sy)) {
+                        mask |= symbol.brailleDotMask(sx, sy);
+                        on_accum.linear.r += samples[sub_idx].linear.r;
+                        on_accum.linear.g += samples[sub_idx].linear.g;
+                        on_accum.linear.b += samples[sub_idx].linear.b;
+                        on_count += 1;
+                    }
+                }
+            }
+
+            frame.codepoints[idx] = symbol.brailleCodepoint(mask);
+            if (frame.color != .none) {
+                if (on_count > 0) {
+                    const denom = @as(f32, @floatFromInt(on_count));
+                    on_accum.linear.r /= denom;
+                    on_accum.linear.g /= denom;
+                    on_accum.linear.b /= denom;
+                    frame.fg[idx] = @import("color.zig").encodeSrgb(on_accum.linear);
+                } else {
+                    frame.fg[idx] = background;
+                }
+                frame.bg[idx] = background;
+            }
+        }
+    }
+
+    return frame;
+}
+
 fn rampCodepoint(ramp: []const u8, value: f32) u21 {
     const clamped = std.math.clamp(value, 0.0, 1.0);
     const last = ramp.len - 1;
@@ -284,6 +408,54 @@ fn halfBlockMonoCodepoint(top_luma: f32, bottom_luma: f32, options: Options) u21
     if (top_on) return '▀';
     if (bottom_on) return '▄';
     return ' ';
+}
+
+fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
+    return switch (options.dither) {
+        .none, .floyd_steinberg => avg,
+        .ordered_2x2, .ordered_4x4 => dither.threshold(options.dither, x, y),
+    };
+}
+
+fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sample, mask: u4) void {
+    var fg = @import("color.zig").LinearRgb{ .r = 0.0, .g = 0.0, .b = 0.0 };
+    var bg = @import("color.zig").LinearRgb{ .r = 0.0, .g = 0.0, .b = 0.0 };
+    var fg_count: u32 = 0;
+    var bg_count: u32 = 0;
+
+    for (samples, 0..) |s, sample_idx| {
+        if ((mask & (@as(u4, 1) << @intCast(sample_idx))) != 0) {
+            fg.r += s.linear.r;
+            fg.g += s.linear.g;
+            fg.b += s.linear.b;
+            fg_count += 1;
+        } else {
+            bg.r += s.linear.r;
+            bg.g += s.linear.g;
+            bg.b += s.linear.b;
+            bg_count += 1;
+        }
+    }
+
+    if (fg_count == 0) {
+        frame.fg[idx] = samples[0].rgb;
+    } else {
+        const denom = @as(f32, @floatFromInt(fg_count));
+        fg.r /= denom;
+        fg.g /= denom;
+        fg.b /= denom;
+        frame.fg[idx] = @import("color.zig").encodeSrgb(fg);
+    }
+
+    if (bg_count == 0) {
+        frame.bg[idx] = frame.fg[idx];
+    } else {
+        const denom = @as(f32, @floatFromInt(bg_count));
+        bg.r /= denom;
+        bg.g /= denom;
+        bg.b /= denom;
+        frame.bg[idx] = @import("color.zig").encodeSrgb(bg);
+    }
 }
 
 fn rgbFromBackground(background: Rgba8) Rgb8 {
@@ -492,4 +664,68 @@ test "writer emits truecolor SGR and reset" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[38;2;255;0;0m") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[48;2;0;0;255m") != null);
     try std.testing.expect(std.mem.endsWith(u8, out, "\x1b[0m\n"));
+}
+
+test "quadrant renderer maps diagonal fixture to quadrant glyph" {
+    const allocator = std.testing.allocator;
+    const pixels = [_]Rgba8{
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+    };
+
+    var frame = try renderToCells(
+        allocator,
+        .{ .width = 2, .height = 2, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none },
+        .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
+    );
+    defer frame.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u21, '▚'), frame.codepoints[0]);
+}
+
+test "braille renderer maps vertical dots to Unicode layout" {
+    const allocator = std.testing.allocator;
+    const pixels = [_]Rgba8{
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+    };
+
+    var frame = try renderToCells(
+        allocator,
+        .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .braille },
+        .{ .mode = .braille, .fit = .stretch },
+    );
+    defer frame.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u21, 0x2847), frame.codepoints[0]);
+}
+
+test "ordered dithering changes low quadrant fixture deterministically" {
+    const allocator = std.testing.allocator;
+    const pixels = [_]Rgba8{
+        .{ .r = 80, .g = 80, .b = 80, .a = 255 },
+        .{ .r = 80, .g = 80, .b = 80, .a = 255 },
+        .{ .r = 80, .g = 80, .b = 80, .a = 255 },
+        .{ .r = 80, .g = 80, .b = 80, .a = 255 },
+    };
+
+    var frame = try renderToCells(
+        allocator,
+        .{ .width = 2, .height = 2, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none },
+        .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch, .dither = .ordered_2x2 },
+    );
+    defer frame.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u21, '▘'), frame.codepoints[0]);
 }

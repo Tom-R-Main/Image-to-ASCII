@@ -46,4 +46,5 @@ zig build
 ## Current Status
 
 Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling, density
-rendering, truecolor half-block rendering, ANSI writer output, and a minimal synthetic-image CLI.
+rendering, truecolor half-block rendering, quadrant rendering, monochrome Braille rendering, ordered dithering, ANSI
+writer output, a synthetic-image CLI, and a small synthetic benchmark command.

@@ -10,6 +10,7 @@ const CliOptions = struct {
     partition: ascii.PartitionKind = .half_1x2,
     color: ascii.ColorMode = .truecolor,
     fit: ascii.FitMode = .stretch,
+    dither: ascii.DitherMode = .none,
     invert: bool = false,
 };
 
@@ -53,12 +54,13 @@ pub fn main(init: std.process.Init) !void {
             .columns = options.width,
             .rows = options.height,
             .color = options.color,
-            .symbols = .block_basic,
+            .symbols = if (options.mode == .braille) .braille else .block_basic,
         },
         .{
             .mode = options.mode,
             .partition = options.partition,
             .fit = options.fit,
+            .dither = options.dither,
             .invert = options.invert,
         },
     );
@@ -103,6 +105,10 @@ fn parseArgs(args: []const []const u8) !CliOptions {
             i += 1;
             if (i >= args.len) return error.MissingValue;
             options.fit = parseFit(args[i]) orelse return error.InvalidFit;
+        } else if (std.mem.eql(u8, arg, "--dither")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.dither = parseDither(args[i]) orelse return error.InvalidDither;
         } else {
             return error.UnknownArgument;
         }
@@ -127,12 +133,14 @@ fn parseSynthetic(value: []const u8) ?Synthetic {
 fn parseMode(value: []const u8) ?ascii.RenderMode {
     if (std.mem.eql(u8, value, "density")) return .density;
     if (std.mem.eql(u8, value, "partition")) return .partition;
+    if (std.mem.eql(u8, value, "braille")) return .braille;
     return null;
 }
 
 fn parsePartition(value: []const u8) ?ascii.PartitionKind {
     if (std.mem.eql(u8, value, "density")) return .density_1x1;
     if (std.mem.eql(u8, value, "half")) return .half_1x2;
+    if (std.mem.eql(u8, value, "quadrant")) return .quadrant_2x2;
     return null;
 }
 
@@ -146,6 +154,13 @@ fn parseFit(value: []const u8) ?ascii.FitMode {
     if (std.mem.eql(u8, value, "contain")) return .contain;
     if (std.mem.eql(u8, value, "cover")) return .cover;
     if (std.mem.eql(u8, value, "stretch")) return .stretch;
+    return null;
+}
+
+fn parseDither(value: []const u8) ?ascii.DitherMode {
+    if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "ordered-2x2")) return .ordered_2x2;
+    if (std.mem.eql(u8, value, "ordered-4x4")) return .ordered_4x4;
     return null;
 }
 
@@ -213,10 +228,11 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --synthetic gradient|checkerboard|color-bars
         \\  --width N
         \\  --height N
-        \\  --mode density|partition
-        \\  --partition density|half
+        \\  --mode density|partition|braille
+        \\  --partition density|half|quadrant
         \\  --color none|truecolor
         \\  --fit contain|cover|stretch
+        \\  --dither none|ordered-2x2|ordered-4x4
         \\  --invert
         \\  --help
         \\
@@ -240,6 +256,8 @@ test "parse minimal cli options" {
         "density",
         "--color",
         "none",
+        "--dither",
+        "ordered-2x2",
     };
     const options = try parseArgs(&args);
     try std.testing.expectEqual(Synthetic.checkerboard, options.synthetic);
@@ -247,4 +265,5 @@ test "parse minimal cli options" {
     try std.testing.expectEqual(@as(u32, 6), options.height);
     try std.testing.expectEqual(ascii.RenderMode.density, options.mode);
     try std.testing.expectEqual(ascii.ColorMode.none, options.color);
+    try std.testing.expectEqual(ascii.DitherMode.ordered_2x2, options.dither);
 }

@@ -1,6 +1,18 @@
 # Benchmarks
 
 Benchmark code will live here once the density and half-block renderers are implemented.
+Run the current synthetic benchmark with:
+
+```sh
+zig build bench
+```
+
+Current benchmark cases:
+
+- density without color,
+- half-block truecolor,
+- quadrant truecolor,
+- Braille monochrome.
 
 Initial targets:
 

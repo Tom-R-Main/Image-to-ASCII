@@ -23,6 +23,18 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    const bench_exe = b.addExecutable(.{
+        .name = "image-to-ascii-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "image_to_ascii", .module = mod },
+            },
+        }),
+    });
+
     const run_step = b.step("run", "Run the CLI");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -30,6 +42,13 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
     run_step.dependOn(&run_cmd.step);
+
+    const bench_step = b.step("bench", "Run renderer benchmarks");
+    const bench_cmd = b.addRunArtifact(bench_exe);
+    if (b.args) |args| {
+        bench_cmd.addArgs(args);
+    }
+    bench_step.dependOn(&bench_cmd.step);
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
@@ -41,7 +60,13 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const bench_tests = b.addTest(.{
+        .root_module = bench_exe.root_module,
+    });
+    const run_bench_tests = b.addRunArtifact(bench_tests);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_bench_tests.step);
 }
