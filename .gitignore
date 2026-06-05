@@ -1,0 +1,11 @@
+.zig-cache/
+zig-out/
+
+.DS_Store
+*.swp
+*.swo
+
+# Local-only benchmark and quality corpora.
+bench/corpus/
+tools/out/
+testdata/generated/

@@ -1,0 +1,19 @@
+.{
+    .name = .image_to_ascii,
+    .version = "0.0.0",
+    .fingerprint = 0x55f66561244cdf41, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+        "LICENSE",
+        "PLAN.md",
+        "RESEARCH.md",
+        "bench",
+        "testdata",
+        "tools",
+    },
+}
