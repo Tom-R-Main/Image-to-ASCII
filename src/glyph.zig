@@ -11,6 +11,9 @@ pub const Glyph = default_atlas_data.Glyph;
 pub const cell_width = default_atlas_data.cell_width;
 pub const cell_height = default_atlas_data.cell_height;
 pub const cell_bits = @as(usize, cell_width) * @as(usize, cell_height);
+pub const shifted_mask_count = 9;
+
+const default_shifted_masks = buildShiftedMasks();
 
 pub const Atlas = struct {
     cell_width: u8,
@@ -19,16 +22,25 @@ pub const Atlas = struct {
     glyphs: []const Glyph,
     /// Packed 1-bit masks, row-major, LSB-first within each byte.
     masks: []const u8,
+    /// Optional pre-shifted masks for dx/dy in -1..1, indexed by glyph index.
+    shifted_masks: ?[]const [shifted_mask_count]u128 = null,
     /// Coverage of the densest glyph; tone is scaled into [0, max] so the full
     /// glyph set is used rather than saturating at mid grays.
     max_coverage: f32,
 
-    pub fn fromSorted(glyphs: []const Glyph, masks: []const u8, cw: u8, ch: u8) Atlas {
+    pub fn fromSorted(
+        glyphs: []const Glyph,
+        masks: []const u8,
+        shifted_masks: ?[]const [shifted_mask_count]u128,
+        cw: u8,
+        ch: u8,
+    ) Atlas {
         return .{
             .cell_width = cw,
             .cell_height = ch,
             .glyphs = glyphs,
             .masks = masks,
+            .shifted_masks = shifted_masks,
             .max_coverage = glyphs[glyphs.len - 1].coverage,
         };
     }
@@ -76,15 +88,63 @@ pub const Atlas = struct {
         const byte = self.masks[@as(usize, g.mask_offset) + bit_index / 8];
         return (byte & (@as(u8, 1) << @intCast(bit_index % 8))) != 0;
     }
+
+    pub fn shiftedMask(self: Atlas, glyph_index: usize, g: Glyph, dx: i32, dy: i32) u128 {
+        if (self.shifted_masks) |shifted| {
+            if (glyph_index < shifted.len and dx >= -1 and dx <= 1 and dy >= -1 and dy <= 1) {
+                return shifted[glyph_index][shiftIndex(dx, dy)];
+            }
+        }
+        return computeShiftedMask(self.masks, g, dx, dy);
+    }
 };
 
 pub fn defaultAtlas() Atlas {
     return Atlas.fromSorted(
         &default_atlas_data.glyphs,
         &default_atlas_data.masks,
+        &default_shifted_masks,
         default_atlas_data.cell_width,
         default_atlas_data.cell_height,
     );
+}
+
+fn buildShiftedMasks() [default_atlas_data.glyphs.len][shifted_mask_count]u128 {
+    @setEvalBranchQuota(20_000);
+    var out: [default_atlas_data.glyphs.len][shifted_mask_count]u128 = undefined;
+    for (default_atlas_data.glyphs, 0..) |g, glyph_index| {
+        var dy: i32 = -1;
+        while (dy <= 1) : (dy += 1) {
+            var dx: i32 = -1;
+            while (dx <= 1) : (dx += 1) {
+                out[glyph_index][shiftIndex(dx, dy)] = computeShiftedMask(&default_atlas_data.masks, g, dx, dy);
+            }
+        }
+    }
+    return out;
+}
+
+fn shiftIndex(dx: i32, dy: i32) usize {
+    std.debug.assert(dx >= -1 and dx <= 1 and dy >= -1 and dy <= 1);
+    return @intCast((dy + 1) * 3 + (dx + 1));
+}
+
+fn computeShiftedMask(masks: []const u8, g: Glyph, dx: i32, dy: i32) u128 {
+    var mask: u128 = 0;
+    var y: u32 = 0;
+    while (y < cell_height) : (y += 1) {
+        const sy = @as(i32, @intCast(y)) - dy;
+        if (sy < 0 or sy >= cell_height) continue;
+
+        var row = masks[@as(usize, g.mask_offset) + @as(usize, @intCast(sy))];
+        if (dx > 0) {
+            row = @intCast((@as(u16, row) << @intCast(dx)) & 0xff);
+        } else if (dx < 0) {
+            row >>= @intCast(-dx);
+        }
+        mask |= @as(u128, row) << @intCast(y * cell_width);
+    }
+    return mask;
 }
 
 /// Coverage of a codepoint in the built-in atlas, for tools (e.g. the quality
@@ -140,4 +200,12 @@ test "default mask lookup works for ascii" {
     try std.testing.expect(defaultMaskBit('/', 6, 3).? or defaultMaskBit('/', 5, 4).?);
     try std.testing.expectEqual(@as(?bool, null), defaultMaskBit(0x2588, 0, 0));
     try std.testing.expectEqual(@as(?bool, null), defaultMaskBit('/', cell_width, 0));
+}
+
+test "default shifted masks include centered glyph mask" {
+    const atlas = defaultAtlas();
+    const slash = atlas.glyphFor('/').?;
+    const shifted = atlas.shiftedMask(14, slash, 0, 0);
+    try std.testing.expect((shifted & (@as(u128, 1) << (3 * cell_width + 6))) != 0 or
+        (shifted & (@as(u128, 1) << (4 * cell_width + 5))) != 0);
 }

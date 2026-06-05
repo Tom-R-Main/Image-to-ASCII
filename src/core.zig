@@ -372,7 +372,7 @@ fn renderGlyphStructure(
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
             var cell = sampleGlyphStructureCell(image, terminal, integral, mapping, col, row, options);
-            const selected = selectStructuredGlyph(atlas, &cell.values, cell.features, options.quality);
+            const selected = selectStructuredGlyph(atlas, &cell.values, cell.binary_mask, cell.features, options.quality);
             frame.codepoints[idx] = selected.codepoint;
 
             if (frame.color != .none) {
@@ -573,6 +573,7 @@ fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
 
 const GlyphCell = struct {
     values: [glyph.cell_bits]f32,
+    binary_mask: ?u128,
     features: StructureFeatures,
 };
 
@@ -612,7 +613,22 @@ fn sampleGlyphStructureCell(
         }
     }
 
-    return .{ .values = values, .features = structureFeatures(&values, sum) };
+    const features = structureFeatures(&values, sum);
+    return .{
+        .values = values,
+        .binary_mask = if (features.max - features.min >= 0.75) packBinaryMask(&values, (features.min + features.max) / 2.0) else null,
+        .features = features,
+    };
+}
+
+fn packBinaryMask(values: *const [glyph.cell_bits]f32, threshold: f32) u128 {
+    var mask: u128 = 0;
+    for (values, 0..) |v, i| {
+        if (v >= threshold) {
+            mask |= @as(u128, 1) << @intCast(i);
+        }
+    }
+    return mask;
 }
 
 fn structureFeatures(values: *const [glyph.cell_bits]f32, sum: f32) StructureFeatures {
@@ -704,6 +720,7 @@ fn sourceOrientation(values: *const [glyph.cell_bits]f32) u8 {
 fn selectStructuredGlyph(
     atlas: glyph.Atlas,
     values: *const [glyph.cell_bits]f32,
+    binary_mask: ?u128,
     features: StructureFeatures,
     quality: Quality,
 ) glyph.Glyph {
@@ -717,11 +734,11 @@ fn selectStructuredGlyph(
     const window = coverageWindow(quality, target_coverage);
     var used_prefilter = false;
 
-    for (atlas.glyphs) |candidate| {
+    for (atlas.glyphs, 0..) |candidate, candidate_index| {
         const coverage_delta = absFloat(candidate.coverage - target_coverage);
         if (coverage_delta > window) continue;
         used_prefilter = true;
-        const score = structuredGlyphScore(atlas, values, features, target_coverage, candidate, quality);
+        const score = structuredGlyphScore(atlas, values, binary_mask, features, target_coverage, candidate, candidate_index, quality);
         if (score < best_score) {
             best_score = score;
             best = candidate;
@@ -730,8 +747,8 @@ fn selectStructuredGlyph(
 
     if (used_prefilter) return best;
 
-    for (atlas.glyphs) |candidate| {
-        const score = structuredGlyphScore(atlas, values, features, target_coverage, candidate, quality);
+    for (atlas.glyphs, 0..) |candidate, candidate_index| {
+        const score = structuredGlyphScore(atlas, values, binary_mask, features, target_coverage, candidate, candidate_index, quality);
         if (score < best_score) {
             best_score = score;
             best = candidate;
@@ -752,12 +769,17 @@ fn coverageWindow(quality: Quality, coverage_value: f32) f32 {
 fn structuredGlyphScore(
     atlas: glyph.Atlas,
     values: *const [glyph.cell_bits]f32,
+    binary_mask: ?u128,
     features: StructureFeatures,
     target_coverage: f32,
     candidate: glyph.Glyph,
+    candidate_index: usize,
     quality: Quality,
 ) f32 {
-    const shape = maskDistance(atlas, values, candidate, quality);
+    const shape = if (binary_mask) |mask|
+        maskDistanceBinary(atlas, mask, candidate, candidate_index, quality)
+    else
+        maskDistance(atlas, values, candidate, quality);
     const coverage_penalty = absFloat(candidate.coverage - target_coverage) * 0.75;
     const centroid_penalty = (absFloat(candidate.centroid_x - features.centroid_x) +
         absFloat(candidate.centroid_y - features.centroid_y)) * 0.035;
@@ -765,6 +787,32 @@ fn structuredGlyphScore(
         absFloat(candidate.spread_y - features.spread_y)) * 0.025;
     const orientation_penalty = @as(f32, @floatFromInt(orientationDistance(candidate.dominant_orientation, features.orientation))) * 0.01;
     return shape + coverage_penalty + centroid_penalty + spread_penalty + orientation_penalty;
+}
+
+fn maskDistanceBinary(
+    atlas: glyph.Atlas,
+    source_mask: u128,
+    candidate: glyph.Glyph,
+    candidate_index: usize,
+    quality: Quality,
+) f32 {
+    const radius: i32 = switch (quality) {
+        .preview => 0,
+        .balanced, .high => 1,
+    };
+
+    var best: u8 = @intCast(glyph.cell_bits);
+    var dy: i32 = -radius;
+    while (dy <= radius) : (dy += 1) {
+        var dx: i32 = -radius;
+        while (dx <= radius) : (dx += 1) {
+            const shifted = atlas.shiftedMask(candidate_index, candidate, dx, dy);
+            const mismatch: u8 = @intCast(@popCount(source_mask ^ shifted));
+            if (mismatch < best) best = mismatch;
+        }
+    }
+
+    return @as(f32, @floatFromInt(best)) / @as(f32, @floatFromInt(glyph.cell_bits));
 }
 
 fn maskDistance(

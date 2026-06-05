@@ -28,6 +28,10 @@
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on
   color-churn frames (~69us -> ~27us for a 98 KB frame).
+- Added a high-contrast fast path for `glyph_structure`: source cells are packed
+  into 128-bit masks and scored with XOR/popcount against pre-shifted glyph masks.
+  The benchmarked structural row drops from ~19ms to ~6.5ms per 80x30 frame while
+  preserving the slash-line glyph result.
 
 ### Added
 
