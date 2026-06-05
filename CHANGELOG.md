@@ -16,6 +16,12 @@
 - Reworked `zig build bench` into a render-kernel matrix (density / half /
   quadrant / Braille, mono and truecolor, plus an ANSI-writer row) reporting
   ns/cell, cells/sec, and bytes.
+- Expanded `zig build bench` into a v0.2 performance-lab harness: it still emits
+  CSV for humans, and now accepts `--out bench/results/baseline.json` to write a
+  tracked machine-readable baseline with mean/median/p95 timing, estimated frame
+  allocation bytes, ANSI bytes, Zig version, OS, and CPU architecture. The matrix
+  now includes glyph-tone truecolor, glyph-structure truecolor, prepared
+  integral-luma reuse, ANSI encode only, and a small quality-compare proxy row.
 - Added an integral-image (summed-area table) luma sampler for monochrome modes,
   selectable via `Options.sample_strategy` (`auto` / `direct_box` /
   `integral_luma`). Fractional bilinear queries make it equal to the direct
@@ -24,6 +30,9 @@
   table is itself an O(image) pass — it only pays off when reused across renders
   (live resize), which is what the explicit `integral_luma` strategy is for. The
   harness gained `--strategy`.
+- Added `PreparedImage`, `prepareImage`, and `renderPreparedToCells` so callers
+  can build the integral-luma table once and reuse it across output sizes. The
+  benchmark matrix now tracks this reuse path separately from one-shot rendering.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

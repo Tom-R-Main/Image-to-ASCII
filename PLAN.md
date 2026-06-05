@@ -671,15 +671,15 @@ Must not include:
 - glyph-structure claims,
 - terminal probing in core.
 
-### `v0.2.0`: Subcell Renderer
+### `v0.2.0`: Performance Laboratory And Reuse
 
 Must include:
 
-- ordered dithering,
-- quadrant symbols,
-- Braille symbols,
-- capability fallback,
-- golden tests.
+- tracked JSON benchmark baseline,
+- render-kernel matrix with median and p95 timing,
+- ANSI encode-only measurement,
+- prepared-image / render-context seam for reusable luma precomputation,
+- quality ratchet hooks before more glyph tuning.
 
 ### `v0.3.0`: Glyph-Tone
 
@@ -734,9 +734,8 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Decide license and package/module name.
-2. Add bootstrap files for a compilable Zig package.
-3. Commit `RESEARCH.md` and `PLAN.md` as the initial planning baseline.
-4. Configure the GitHub remote.
-5. Push the initial baseline to `Tom-R-Main/Image-to-ASCII`.
-6. Start Milestone 1 on a small branch.
+1. Use `bench/results/baseline.json` as the current v0.2 performance baseline.
+2. Add span precomputation for source sampling and compare against this baseline.
+3. Add a render-into/frame-reuse API once the sampler hot loop is measured.
+4. Expand the quality corpus before deeper glyph-structure pruning.
+5. Keep PNG/JPEG adapter work outside core after the performance lab is stable.

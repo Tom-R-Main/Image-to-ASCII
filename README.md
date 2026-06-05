@@ -42,6 +42,7 @@ Requires Zig `0.16.0`.
 zig build test
 zig build
 zig build bench
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 ```
 
 ## Examples
@@ -72,6 +73,26 @@ var frame = try ascii.renderToCells(
 defer frame.deinit(allocator);
 ```
 
+Reuse luma precomputation for resize or animation loops that opt into integral sampling:
+
+```zig
+var prepared = try ascii.prepareImage(
+    allocator,
+    image_view,
+    .{ .columns = 80, .rows = 24, .color = .none },
+    .{ .sample_strategy = .integral_luma },
+);
+defer prepared.deinit(allocator);
+
+var frame = try ascii.renderPreparedToCells(
+    allocator,
+    &prepared,
+    .{ .columns = 100, .rows = 30, .color = .none },
+    .{ .mode = .density, .sample_strategy = .integral_luma },
+);
+defer frame.deinit(allocator);
+```
+
 ## Current Status
 
 Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling
@@ -80,8 +101,9 @@ half-block rendering, quadrant rendering, monochrome Braille rendering, calibrat
 glyph-structure rendering, ordered
 dithering, a configurable representative-color solve for two-color symbol families (`Options.color_stat`:
 `mean`/`trimmed_mean`/`median`), a selectable sampling strategy (`Options.sample_strategy`: `auto`/`direct_box`/
-`integral_luma`), a fast hand-rolled ANSI writer with SGR coalescing, a synthetic-image CLI, PPM/PAM fixture input, and a
-render-kernel benchmark. The hot path uses a compile-time sRGB→linear lookup table; rendering is ~8× faster than the
+`integral_luma`), reusable `PreparedImage` luma precomputation for TUI resize loops, a fast hand-rolled ANSI writer with
+SGR coalescing, a synthetic-image CLI, PPM/PAM fixture input, and a render-kernel benchmark with CSV output plus a tracked
+JSON baseline artifact. The hot path uses a compile-time sRGB→linear lookup table; rendering is ~8× faster than the
 initial baseline.
 
 A quality harness lives under `tools/` (`zig build compare`): it renders an image, reconstructs it from the emitted

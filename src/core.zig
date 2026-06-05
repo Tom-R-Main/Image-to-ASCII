@@ -120,6 +120,34 @@ pub const Options = struct {
     sample_strategy: SampleStrategy = .auto,
 };
 
+pub const PrepareOptions = struct {
+    /// Precompute luma only when the caller opts into summed-area sampling.
+    /// `auto` remains direct for one-shot renders, matching `Options`.
+    sample_strategy: SampleStrategy = .auto,
+};
+
+pub const PreparedImage = struct {
+    image: ImageView,
+    luma_sat: ?sample.IntegralLuma = null,
+    luma_background: Rgba8,
+
+    pub fn deinit(self: *PreparedImage, allocator: std.mem.Allocator) void {
+        if (self.luma_sat) |*sat| sat.deinit(allocator);
+        self.* = undefined;
+    }
+
+    fn integralFor(self: *const PreparedImage, terminal: TerminalProfile, options: Options) ?*const sample.IntegralLuma {
+        if (!sample.useIntegral(options.sample_strategy, self.image, terminal.color)) return null;
+        if (!eqlRgba(self.luma_background, terminal.background)) return null;
+        if (self.luma_sat) |*sat| return sat;
+        return null;
+    }
+};
+
+const RenderContext = struct {
+    luma_sat: ?*const sample.IntegralLuma = null,
+};
+
 pub const Frame = struct {
     columns: u32,
     rows: u32,
@@ -178,17 +206,63 @@ pub fn renderToCells(
     try validateInputs(image, terminal, options);
     try validateSupportedColor(terminal.color);
 
+    return renderToCellsWithContext(allocator, image, terminal, options, .{});
+}
+
+pub fn prepareImage(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: PrepareOptions,
+) !PreparedImage {
+    try validateImage(image);
+    try validateTerminal(terminal);
+
+    var prepared = PreparedImage{
+        .image = image,
+        .luma_background = terminal.background,
+    };
+    errdefer prepared.deinit(allocator);
+
+    if (sample.useIntegral(options.sample_strategy, image, terminal.color)) {
+        prepared.luma_sat = try sample.IntegralLuma.build(allocator, image, terminal.background);
+    }
+
+    return prepared;
+}
+
+pub fn renderPreparedToCells(
+    allocator: std.mem.Allocator,
+    prepared: *const PreparedImage,
+    terminal: TerminalProfile,
+    options: Options,
+) !Frame {
+    try validateInputs(prepared.image, terminal, options);
+    try validateSupportedColor(terminal.color);
+
+    return renderToCellsWithContext(allocator, prepared.image, terminal, options, .{
+        .luma_sat = prepared.integralFor(terminal, options),
+    });
+}
+
+fn renderToCellsWithContext(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+    context: RenderContext,
+) !Frame {
     return switch (options.mode) {
-        .density => renderDensity(allocator, image, terminal, options),
+        .density => renderDensity(allocator, image, terminal, options, context),
         .partition => switch (options.partition) {
-            .density_1x1 => renderDensity(allocator, image, terminal, options),
+            .density_1x1 => renderDensity(allocator, image, terminal, options, context),
             .half_1x2 => renderHalfBlock(allocator, image, terminal, options),
-            .quadrant_2x2 => renderQuadrant(allocator, image, terminal, options),
+            .quadrant_2x2 => renderQuadrant(allocator, image, terminal, options, context),
             else => Error.UnsupportedRenderMode,
         },
-        .braille => renderBraille(allocator, image, terminal, options),
-        .glyph_tone => renderGlyphTone(allocator, image, terminal, options),
-        .glyph_structure => renderGlyphStructure(allocator, image, terminal, options),
+        .braille => renderBraille(allocator, image, terminal, options, context),
+        .glyph_tone => renderGlyphTone(allocator, image, terminal, options, context),
+        .glyph_structure => renderGlyphStructure(allocator, image, terminal, options, context),
     };
 }
 
@@ -220,6 +294,10 @@ pub fn renderToWriter(
     var frame = try renderToCells(allocator, image, terminal, options);
     defer frame.deinit(allocator);
 
+    try ansi.writeFrame(writer, frame);
+}
+
+pub fn renderFrameToWriter(writer: *std.Io.Writer, frame: Frame) !void {
     try ansi.writeFrame(writer, frame);
 }
 
@@ -262,9 +340,20 @@ fn maybeBuildIntegral(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !?sample.IntegralLuma {
+    if (context.luma_sat != null) return null;
     if (!sample.useIntegral(options.sample_strategy, image, terminal.color)) return null;
     return try sample.IntegralLuma.build(allocator, image, terminal.background);
+}
+
+fn resolveIntegral(
+    owned: *?sample.IntegralLuma,
+    context: RenderContext,
+) ?*const sample.IntegralLuma {
+    if (context.luma_sat) |sat| return sat;
+    if (owned.*) |*sat| return sat;
+    return null;
 }
 
 fn renderDensity(
@@ -272,14 +361,15 @@ fn renderDensity(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !Frame {
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
-    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
-    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+    const integral = resolveIntegral(&integral_opt, context);
 
     const background = rgbFromBackground(terminal.background);
 
@@ -313,14 +403,15 @@ fn renderGlyphTone(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !Frame {
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
-    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
-    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+    const integral = resolveIntegral(&integral_opt, context);
 
     const atlas = glyph.defaultAtlas();
     const background = rgbFromBackground(terminal.background);
@@ -355,14 +446,15 @@ fn renderGlyphStructure(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !Frame {
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
-    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
-    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+    const integral = resolveIntegral(&integral_opt, context);
 
     const atlas = glyph.defaultAtlas();
 
@@ -424,6 +516,7 @@ fn renderQuadrant(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !Frame {
     if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
 
@@ -431,9 +524,9 @@ fn renderQuadrant(
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
-    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
-    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+    const integral = resolveIntegral(&integral_opt, context);
 
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
@@ -487,6 +580,7 @@ fn renderBraille(
     image: ImageView,
     terminal: TerminalProfile,
     options: Options,
+    context: RenderContext,
 ) !Frame {
     if (terminal.symbols == .ascii_only or terminal.symbols == .block_basic or terminal.symbols == .block_legacy) {
         return Error.UnsupportedRenderMode;
@@ -496,9 +590,9 @@ fn renderBraille(
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
-    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
-    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+    const integral = resolveIntegral(&integral_opt, context);
 
     const background = rgbFromBackground(terminal.background);
 
@@ -954,6 +1048,10 @@ fn rgbFromBackground(background: Rgba8) Rgb8 {
     return .{ .r = background.r, .g = background.g, .b = background.b };
 }
 
+fn eqlRgba(a: Rgba8, b: Rgba8) bool {
+    return a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a;
+}
+
 test "validates image dimensions" {
     const pixels = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
 
@@ -1312,6 +1410,32 @@ test "integral_luma sampling matches direct_box for monochrome modes" {
 
         try std.testing.expectEqualSlices(u21, direct.codepoints, integral.codepoints);
     }
+}
+
+test "prepared integral_luma render matches direct render" {
+    const allocator = std.testing.allocator;
+
+    var pixels: [6 * 6]Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 6);
+        const y: u8 = @intCast(i / 6);
+        p.* = .{ .r = x * 35, .g = y * 35, .b = 90, .a = 255 };
+    }
+    const image = ImageView{ .width = 6, .height = 6, .stride = 6 * @sizeOf(Rgba8), .pixels = &pixels };
+    const terminal = TerminalProfile{ .columns = 3, .rows = 2, .color = .none };
+    const options = Options{ .mode = .density, .fit = .stretch, .sample_strategy = .integral_luma };
+
+    var prepared = try prepareImage(allocator, image, terminal, .{ .sample_strategy = .integral_luma });
+    defer prepared.deinit(allocator);
+    try std.testing.expect(prepared.luma_sat != null);
+
+    var direct = try renderToCells(allocator, image, terminal, options);
+    defer direct.deinit(allocator);
+
+    var reused = try renderPreparedToCells(allocator, &prepared, terminal, options);
+    defer reused.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u21, direct.codepoints, reused.codepoints);
 }
 
 test "braille renderer requires braille symbol capability" {
