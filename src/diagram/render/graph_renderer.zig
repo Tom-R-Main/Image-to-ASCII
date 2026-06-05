@@ -237,7 +237,7 @@ fn drawEdgeLabel(canvas: *cc.CellCanvas, edge: layered.RoutedEdge, label: []cons
     const points = edge.points;
     if (points.len < 2) return;
     const w: i32 = @intCast(text_measure.width(label) catch return);
-    const mid = pathMidpoint(points);
+    const mid = layered.pathMidpoint(points) orelse return;
 
     var candidates: [4]layered.Point = undefined;
     var count: usize = 0;
@@ -247,8 +247,8 @@ fn drawEdgeLabel(canvas: *cc.CellCanvas, edge: layered.RoutedEdge, label: []cons
         candidates[1] = .{ .x = left, .y = mid.point.y + 1 };
         count = 2;
     } else {
-        candidates[0] = .{ .x = mid.point.x + 1, .y = mid.point.y };
-        candidates[1] = .{ .x = mid.point.x - w, .y = mid.point.y };
+        candidates[0] = .{ .x = mid.point.x + 2, .y = mid.point.y };
+        candidates[1] = .{ .x = mid.point.x - w - 1, .y = mid.point.y };
         candidates[2] = .{ .x = mid.point.x - @divTrunc(w, 2), .y = mid.point.y - 1 };
         candidates[3] = .{ .x = mid.point.x - @divTrunc(w, 2), .y = mid.point.y + 1 };
         count = 4;
@@ -295,35 +295,6 @@ fn rowIsBlank(canvas: *const cc.CellCanvas, x: i32, y: i32, w: i32) bool {
         if (!canvas.isBlank(x + i, y)) return false;
     }
     return true;
-}
-
-const Midpoint = struct { point: layered.Point, horizontal: bool };
-
-/// Midpoint of an orthogonal polyline by total arc length.
-fn pathMidpoint(points: []const layered.Point) Midpoint {
-    var total: i32 = 0;
-    var i: usize = 1;
-    while (i < points.len) : (i += 1) {
-        total += @intCast(@abs(points[i].x - points[i - 1].x) + @abs(points[i].y - points[i - 1].y));
-    }
-    var target = @divTrunc(total, 2);
-    i = 1;
-    while (i < points.len) : (i += 1) {
-        const a = points[i - 1];
-        const b = points[i];
-        const seg: i32 = @intCast(@abs(b.x - a.x) + @abs(b.y - a.y));
-        if (seg == 0) continue;
-        if (target <= seg) {
-            if (a.y == b.y) {
-                const step: i32 = if (b.x >= a.x) 1 else -1;
-                return .{ .point = .{ .x = a.x + step * target, .y = a.y }, .horizontal = true };
-            }
-            const step: i32 = if (b.y >= a.y) 1 else -1;
-            return .{ .point = .{ .x = a.x, .y = a.y + step * target }, .horizontal = false };
-        }
-        target -= seg;
-    }
-    return .{ .point = points[points.len / 2], .horizontal = true };
 }
 
 fn drawDecoration(
@@ -553,6 +524,22 @@ test "ER cardinality text appears at both ends of a relationship" {
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "1") != null);
     try testing.expect(std.mem.indexOf(u8, text, "0..N") != null);
+}
+
+test "ER cardinality text is not clipped on narrow diagrams" {
+    var diag: ?er.MermaidError = null;
+    var frame = try renderMermaidEr(testing.allocator, "erDiagram\n A ||--o{ B\n", .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const text = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "1") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "0..N") != null);
+}
+
+test "edge labels are included in graph bounds" {
+    const text = try renderToText(testing.allocator, "flowchart TD\n A -->|very explicit condition| B\n");
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "very explicit condition") != null);
 }
 
 test "class card has two compartments and a unicode inheritance triangle" {

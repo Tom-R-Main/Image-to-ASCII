@@ -5,13 +5,13 @@
 | string custNumber |
 +-------------------+
           |1         
-          |places    
+          | places   
           |0..N      
       +-------+      
       | ORDER |      
       +-------+      
           |1         
-          |contains  
+          | contains 
           |1..N      
     +----------+     
     | LINEITEM |     

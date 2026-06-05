@@ -53,6 +53,11 @@ pub const RoutedEdge = struct {
     label_at: ?Point,
 };
 
+pub const PathMidpoint = struct {
+    point: Point,
+    horizontal: bool,
+};
+
 pub const Layout = struct {
     arena: std.heap.ArenaAllocator,
     columns: u32,
@@ -178,7 +183,7 @@ const Engine = struct {
         self.assignPrimary();
         self.mapToCells();
         const edges = try self.routeEdges();
-        const dims = self.shiftToOrigin(edges);
+        const dims = try self.shiftToOrigin(edges);
         const nodes = try self.collectNodes();
 
         return .{ .columns = dims.columns, .rows = dims.rows, .nodes = nodes, .edges = edges };
@@ -565,7 +570,7 @@ const Engine = struct {
             .line = e.line,
             .arrow = e.arrow,
             .label = if (e.label) |l| try self.arena.dupe(u8, l) else null,
-            .label_at = midpoint(points),
+            .label_at = if (pathMidpoint(points)) |m| m.point else null,
         };
     }
 
@@ -636,7 +641,7 @@ const Engine = struct {
 
     // -- finalize -----------------------------------------------------------
 
-    fn shiftToOrigin(self: *Engine, edges: []RoutedEdge) struct { columns: u32, rows: u32 } {
+    fn shiftToOrigin(self: *Engine, edges: []RoutedEdge) LayoutError!struct { columns: u32, rows: u32 } {
         var min_x: i32 = std.math.maxInt(i32);
         var min_y: i32 = std.math.maxInt(i32);
         var max_x: i32 = std.math.minInt(i32);
@@ -644,17 +649,25 @@ const Engine = struct {
 
         for (self.lnodes.items) |ln| {
             if (ln.kind != .real) continue;
-            min_x = @min(min_x, ln.rect.x);
-            min_y = @min(min_y, ln.rect.y);
-            max_x = @max(max_x, ln.rect.x + @as(i32, @intCast(ln.rect.width)) - 1);
-            max_y = @max(max_y, ln.rect.y + @as(i32, @intCast(ln.rect.height)) - 1);
+            includeRectBounds(ln.rect, &min_x, &min_y, &max_x, &max_y);
         }
         for (edges) |re| {
             for (re.points) |p| {
-                min_x = @min(min_x, p.x);
-                min_y = @min(min_y, p.y);
-                max_x = @max(max_x, p.x);
-                max_y = @max(max_y, p.y);
+                includePointBounds(p, &min_x, &min_y, &max_x, &max_y);
+            }
+            if (re.label) |label| {
+                const width: i32 = @intCast(try text_measure.width(label));
+                includeEdgeLabelBounds(re.points, width, &min_x, &min_y, &max_x, &max_y);
+            }
+
+            const e = self.diagram.edges[re.edge_index];
+            if (e.from_end) |text| {
+                const width: i32 = @intCast(try text_measure.width(text));
+                includeEndLabelBounds(re.points, true, width, &min_x, &min_y, &max_x, &max_y);
+            }
+            if (e.to_end) |text| {
+                const width: i32 = @intCast(try text_measure.width(text));
+                includeEndLabelBounds(re.points, false, width, &min_x, &min_y, &max_x, &max_y);
             }
         }
 
@@ -700,6 +713,61 @@ const Engine = struct {
 
 // -- helpers ----------------------------------------------------------------
 
+fn includePointBounds(p: Point, min_x: *i32, min_y: *i32, max_x: *i32, max_y: *i32) void {
+    min_x.* = @min(min_x.*, p.x);
+    min_y.* = @min(min_y.*, p.y);
+    max_x.* = @max(max_x.*, p.x);
+    max_y.* = @max(max_y.*, p.y);
+}
+
+fn includeRectBounds(rect: Rect, min_x: *i32, min_y: *i32, max_x: *i32, max_y: *i32) void {
+    min_x.* = @min(min_x.*, rect.x);
+    min_y.* = @min(min_y.*, rect.y);
+    max_x.* = @max(max_x.*, rect.x + @as(i32, @intCast(rect.width)) - 1);
+    max_y.* = @max(max_y.*, rect.y + @as(i32, @intCast(rect.height)) - 1);
+}
+
+fn includeTextBounds(anchor: Point, width: i32, min_x: *i32, min_y: *i32, max_x: *i32, max_y: *i32) void {
+    if (width <= 0) return;
+    min_x.* = @min(min_x.*, anchor.x);
+    min_y.* = @min(min_y.*, anchor.y);
+    max_x.* = @max(max_x.*, anchor.x + width - 1);
+    max_y.* = @max(max_y.*, anchor.y);
+}
+
+fn includeEdgeLabelBounds(points: []const Point, width: i32, min_x: *i32, min_y: *i32, max_x: *i32, max_y: *i32) void {
+    const mid = pathMidpoint(points) orelse return;
+    const half = @divTrunc(width, 2);
+
+    if (mid.horizontal) {
+        const left = mid.point.x - half;
+        includeTextBounds(.{ .x = left, .y = mid.point.y - 1 }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = left, .y = mid.point.y + 1 }, width, min_x, min_y, max_x, max_y);
+    } else {
+        includeTextBounds(.{ .x = mid.point.x + 2, .y = mid.point.y }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = mid.point.x - width - 1, .y = mid.point.y }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = mid.point.x - half, .y = mid.point.y - 1 }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = mid.point.x - half, .y = mid.point.y + 1 }, width, min_x, min_y, max_x, max_y);
+    }
+
+    includeTextBounds(.{ .x = mid.point.x - half, .y = mid.point.y }, width, min_x, min_y, max_x, max_y);
+}
+
+fn includeEndLabelBounds(points: []const Point, at_source: bool, width: i32, min_x: *i32, min_y: *i32, max_x: *i32, max_y: *i32) void {
+    if (points.len < 2) return;
+    const p = if (at_source) points[0] else points[points.len - 1];
+    const q = if (at_source) points[1] else points[points.len - 2];
+
+    if (p.x == q.x) {
+        includeTextBounds(.{ .x = p.x + 1, .y = p.y }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = p.x - width, .y = p.y }, width, min_x, min_y, max_x, max_y);
+    } else {
+        const left = p.x - @divTrunc(width, 2);
+        includeTextBounds(.{ .x = left, .y = p.y - 1 }, width, min_x, min_y, max_x, max_y);
+        includeTextBounds(.{ .x = left, .y = p.y + 1 }, width, min_x, min_y, max_x, max_y);
+    }
+}
+
 fn pushPoint(allocator: std.mem.Allocator, pts: *std.ArrayList(Point), p: Point) !void {
     if (pts.items.len > 0) {
         const last = pts.items[pts.items.len - 1];
@@ -708,9 +776,32 @@ fn pushPoint(allocator: std.mem.Allocator, pts: *std.ArrayList(Point), p: Point)
     try pts.append(allocator, p);
 }
 
-fn midpoint(points: []const Point) ?Point {
-    if (points.len == 0) return null;
-    return points[points.len / 2];
+/// Midpoint of an orthogonal polyline by total arc length.
+pub fn pathMidpoint(points: []const Point) ?PathMidpoint {
+    if (points.len < 2) return null;
+    var total: i32 = 0;
+    var i: usize = 1;
+    while (i < points.len) : (i += 1) {
+        total += @intCast(@abs(points[i].x - points[i - 1].x) + @abs(points[i].y - points[i - 1].y));
+    }
+    var target = @divTrunc(total, 2);
+    i = 1;
+    while (i < points.len) : (i += 1) {
+        const a = points[i - 1];
+        const b = points[i];
+        const seg: i32 = @intCast(@abs(b.x - a.x) + @abs(b.y - a.y));
+        if (seg == 0) continue;
+        if (target <= seg) {
+            if (a.y == b.y) {
+                const step: i32 = if (b.x >= a.x) 1 else -1;
+                return .{ .point = .{ .x = a.x + step * target, .y = a.y }, .horizontal = true };
+            }
+            const step: i32 = if (b.y >= a.y) 1 else -1;
+            return .{ .point = .{ .x = a.x, .y = a.y + step * target }, .horizontal = false };
+        }
+        target -= seg;
+    }
+    return .{ .point = points[points.len / 2], .horizontal = true };
 }
 
 /// Stable insertion sort of `items` by parallel `keys` (small ranks; stability

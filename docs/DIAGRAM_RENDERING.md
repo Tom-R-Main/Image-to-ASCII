@@ -303,8 +303,9 @@ faithfully, so the tokens map to multiplicity text — `||`→`1`, `|o`/`o|`→`
 ```
 
 Deferred: hyphenated/quoted entity names, attribute key/comment columns, and
-including end-label extents in the layout's size (today they can clip on a very
-narrow diagram).
+full crow's-foot glyph geometry. Edge labels and endpoint labels are included in
+the layout bounds before the graph is shifted to the origin, so narrow diagrams
+still keep cardinality text inside the emitted canvas.
 
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
 routes to the flowchart, sequence, state, class, or ER backend, so
@@ -345,8 +346,8 @@ Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
 labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
 class and ER diagrams render compartment cards (with UML relationship ends and
 cardinality respectively). Next: reuse the card renderer for
-requirement/architecture/C4 cards, and fold end-label extents into the layout's
-size so cardinality never clips.
+requirement/architecture/C4 cards, and spread multiple same-side class
+decorations across the parent's edge.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

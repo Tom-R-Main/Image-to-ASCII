@@ -875,10 +875,11 @@ Must include:
    renderer).~~ ✅
 10. ~~Add the ER diagram (entity cards + cardinality), reusing the compartment-node
     renderer.~~ ✅
-11. Include end-label/cardinality extents in the layout's size so they never clip;
-    reuse the card renderer for requirement / architecture / C4 cards; spread
+11. ~~Include edge-label and end-label/cardinality extents in the layout's size
+    so they never clip.~~ ✅
+12. Reuse the card renderer for requirement / architecture / C4 cards; spread
     multiple same-side class decorations across the parent's edge.
-12. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+13. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
     becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

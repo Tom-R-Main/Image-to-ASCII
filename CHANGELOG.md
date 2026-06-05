@@ -119,8 +119,10 @@
   label. New public API: `parseEr`, `renderMermaidEr`. Golden fixture in
   `testdata/mermaid/er/`. v0 limitations: entity names are `[A-Za-z0-9_]`
   (hyphenated/quoted names unsupported); attribute key/comment columns render
-  verbatim; end labels can clip on very narrow diagrams (they aren't yet included
-  in the layout's size).
+  verbatim.
+- Fixed graph layout bounds to include edge-label and endpoint-label candidate
+  slots before shifting the diagram to the origin. ER cardinality labels now
+  stay inside the canvas even for very narrow diagrams.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's
