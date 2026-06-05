@@ -156,8 +156,10 @@ that is safe, such as rendering an unsupported shape as a rectangle.
 6. Sequence diagram parser and lane/time layout.
 7. Benchmark and golden harness for diagram rendering.
 
-Next: a CLI `mermaid` subcommand (`cell-render mermaid diagram.mmd --ascii`), node
-shape rendering, distinct dotted/thick strokes, and the sequence-diagram track.
+The `mermaid` CLI subcommand is wired (`image-to-ascii mermaid diagram.mmd
+[--ascii|--unicode] [--color none|truecolor]`); syntax errors print as
+`file:line:col: message`. Next: distinct node-shape rendering, dotted/thick
+strokes, off-line edge labels, and the sequence-diagram track.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

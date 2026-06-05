@@ -115,8 +115,10 @@ Status: implemented (`src/diagram/layout/layered.zig`, `src/diagram/render/graph
 
 Output is overlap-free by construction and deterministic; it is not
 crossing-minimal. Golden fixtures: `testdata/mermaid/flowchart/*.{mmd,golden.txt}`.
+A CLI `mermaid` subcommand renders `.mmd` files (`image-to-ascii mermaid <file>
+[--ascii|--unicode] [--color none|truecolor]`) with `file:line:col` diagnostics.
 Deferred: distinct node-shape rendering, dotted/thick stroke glyphs, off-line edge
-labels, a CLI `mermaid` subcommand, and reusable diagram workspaces.
+labels, and reusable diagram workspaces.
 
 Diagram benchmark artifacts now exist:
 
@@ -841,12 +843,15 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Add a minimal Mermaid flowchart lexer/parser that normalizes to a graph IR
-   and rejects unsupported syntax clearly.
-2. Add a layered graph layout and render the first flowchart subset through
-   `CellCanvas`.
-3. Add a CLI `mermaid` subcommand for visual smoke testing actual `.mmd` files.
-4. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+1. ~~Add a minimal Mermaid flowchart lexer/parser that normalizes to a graph IR
+   and rejects unsupported syntax clearly.~~ ✅
+2. ~~Add a layered graph layout and render the first flowchart subset through
+   `CellCanvas`.~~ ✅
+3. ~~Add a CLI `mermaid` subcommand for visual smoke testing actual `.mmd` files.~~ ✅
+4. Render node shapes distinctly (round/circle/diamond) and give dotted/thick
+   strokes their own glyphs; place edge labels beside the routing line.
+5. Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.
+6. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
    becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

@@ -362,4 +362,21 @@ Flags: `--input` (PPM/PAM/PNG/JPEG), `--synthetic gradient|checkerboard|color-ba
 
 PNG/JPEG loading is implemented with `zigimg` in `test_support/image_loader.zig` and imported only by the CLI/tools. The
 core module still exposes raw `ImageView`/`Rgba8` input and does not export decoder types.
+
+### `mermaid` subcommand
+
+Render a Mermaid flowchart from a `.mmd` file straight to the terminal:
+
+```sh
+# Box-drawing output (truecolor by default):
+zig build run -- mermaid testdata/mermaid/flowchart/diamond.mmd
+
+# ASCII fallback, no color (pipe-friendly, deterministic):
+zig build run -- mermaid testdata/mermaid/flowchart/diamond.mmd --ascii --color none
+```
+
+Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`. Syntax errors are reported to stderr as
+`file:line:col: message` and exit non-zero — the actionable feedback an agent needs to fix generated diagrams. The
+supported subset and renderer limitations are documented under [Mermaid flowchart frontend](#mermaid-flowchart-frontend)
+and in [docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md).
 </content>

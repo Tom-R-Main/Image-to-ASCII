@@ -34,6 +34,20 @@ pub fn main(init: std.process.Init) !void {
     var stderr_file_writer: Io.File.Writer = .init(.stderr(), init.io, &stderr_buffer);
     const stderr = &stderr_file_writer.interface;
 
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "mermaid")) {
+        runMermaid(stdout, stderr, init.io, arena, args[2..]) catch |err| {
+            switch (err) {
+                // The precise file:line:col diagnostic is already on stderr.
+                error.MermaidSyntax => {},
+                else => try stderr.print("error: {s}\n", .{describeCliError(err)}),
+            }
+            try stderr.flush();
+            std.process.exit(1);
+        };
+        try stdout.flush();
+        return;
+    }
+
     const options = parseArgs(args) catch |err| {
         try stderr.print("error: {s}\n\n", .{describeCliError(err)});
         try writeUsage(stderr);
@@ -85,6 +99,102 @@ fn renderImage(writer: *std.Io.Writer, allocator: std.mem.Allocator, image: asci
             .dither = options.dither,
             .invert = options.invert,
         },
+    );
+}
+
+const MermaidCliOptions = struct {
+    input_path: ?[]const u8 = null,
+    glyph_set: ascii.GlyphSet = .unicode_box,
+    color: ascii.ColorMode = .truecolor,
+};
+
+/// `mermaid <file.mmd> [--ascii|--unicode] [--color none|truecolor]`.
+/// Reads a Mermaid flowchart, renders it to terminal cells, and writes the
+/// frame to `writer`. Syntax errors are reported to `stderr` as
+/// `file:line:col: message` and surfaced as `error.MermaidSyntax`.
+fn runMermaid(
+    writer: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    sub_args: []const []const u8,
+) !void {
+    if (argsContain(sub_args, "--help")) {
+        try writeMermaidUsage(writer);
+        return;
+    }
+
+    const options = try parseMermaidArgs(sub_args);
+    const path = options.input_path orelse return error.MissingInput;
+
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4 * 1024 * 1024));
+
+    var diagnostic: ?ascii.MermaidError = null;
+    var frame = ascii.renderMermaidFlowchart(allocator, source, .{
+        .glyph_set = options.glyph_set,
+        .color = options.color,
+    }, &diagnostic) catch |err| {
+        if (err == error.MermaidSyntax) {
+            if (diagnostic) |d| {
+                try stderr.print("{s}:{d}:{d}: {s}\n", .{ path, d.line, d.column, d.message });
+            }
+        }
+        return err;
+    };
+    defer frame.deinit(allocator);
+
+    try ascii.renderFrameToWriter(writer, frame);
+}
+
+fn parseMermaidArgs(args: []const []const u8) !MermaidCliOptions {
+    var options = MermaidCliOptions{};
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--help")) {
+            continue;
+        } else if (std.mem.eql(u8, arg, "--ascii")) {
+            options.glyph_set = .ascii;
+        } else if (std.mem.eql(u8, arg, "--unicode")) {
+            options.glyph_set = .unicode_box;
+        } else if (std.mem.eql(u8, arg, "--color")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.color = parseMermaidColor(args[i]) orelse return error.InvalidColor;
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            return error.UnknownArgument;
+        } else {
+            if (options.input_path != null) return error.UnexpectedArgument;
+            options.input_path = arg;
+        }
+    }
+
+    return options;
+}
+
+/// The diagram renderer paints into a `CellCanvas`, which only models no-color
+/// and truecolor; ANSI 16/256 are not available for diagrams yet.
+fn parseMermaidColor(value: []const u8) ?ascii.ColorMode {
+    if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "truecolor")) return .truecolor;
+    return null;
+}
+
+fn writeMermaidUsage(writer: *std.Io.Writer) !void {
+    try writer.writeAll(
+        \\usage: image-to-ascii mermaid <file.mmd> [options]
+        \\
+        \\options:
+        \\  --ascii              use the ASCII fallback glyph set (+ - | > etc.)
+        \\  --unicode            use box-drawing glyphs (default)
+        \\  --color none|truecolor   (default truecolor)
+        \\  --help
+        \\
+        \\Renders a Mermaid flowchart subset (flowchart/graph; TD/TB/LR/RL/BT;
+        \\rect/round/circle/diamond nodes; --> --- -.-> ==> --o --x edges; pipe
+        \\labels; %% comments). Unsupported syntax is reported as file:line:col.
+        \\
     );
 }
 
@@ -260,6 +370,9 @@ fn describeCliError(err: anyerror) []const u8 {
         error.InvalidDither => "dither must be none, ordered-2x2, or ordered-4x4",
         error.InvalidDimension => "width and height must be positive integers",
         error.UnknownArgument => "unknown argument",
+        error.UnexpectedArgument => "unexpected extra argument",
+        error.MissingInput => "expected a path to a .mmd file",
+        error.MermaidSyntax => "mermaid source has a syntax error",
         image_loader.DecodeError.UnsupportedFormat => "input file must be P3/P6 PPM, P7 PAM, PNG, or JPEG",
         image_loader.DecodeError.UnsupportedPixelFormat => "decoded image has an unsupported pixel format",
         image_loader.DecodeError.ImageTooLarge => "decoded image dimensions are too large",
@@ -278,6 +391,7 @@ fn describeCliError(err: anyerror) []const u8 {
 fn writeUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\usage: image-to-ascii [options]
+        \\       image-to-ascii mermaid <file.mmd> [--ascii|--unicode] [--color none|truecolor]
         \\
         \\options:
         \\  --input path.ppm|path.pam|path.png|path.jpg|path.jpeg
@@ -401,6 +515,39 @@ test "CLI parses input path" {
     };
     const options = try parseArgs(&args);
     try std.testing.expectEqualStrings("testdata/diagonal.ppm", options.input_path.?);
+}
+
+test "parse mermaid cli options" {
+    const args = [_][]const u8{ "diagram.mmd", "--ascii", "--color", "none" };
+    const options = try parseMermaidArgs(&args);
+    try std.testing.expectEqualStrings("diagram.mmd", options.input_path.?);
+    try std.testing.expectEqual(ascii.GlyphSet.ascii, options.glyph_set);
+    try std.testing.expectEqual(ascii.ColorMode.none, options.color);
+}
+
+test "mermaid rejects a second positional argument" {
+    const args = [_][]const u8{ "a.mmd", "b.mmd" };
+    try std.testing.expectError(error.UnexpectedArgument, parseMermaidArgs(&args));
+}
+
+test "CLI mermaid renders a flowchart fixture" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var out_buf: [4096]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&out_buf);
+    var err_buf: [256]u8 = undefined;
+    var err: std.Io.Writer = .fixed(&err_buf);
+    var threaded = std.Io.Threaded.init_single_threaded;
+
+    const sub_args = [_][]const u8{ "testdata/mermaid/flowchart/basic_lr.mmd", "--ascii", "--color", "none" };
+    try runMermaid(&out, &err, threaded.io(), arena_state.allocator(), &sub_args);
+
+    const text = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, text, "+-") != null); // box corners
+    try std.testing.expect(std.mem.indexOf(u8, text, ">") != null); // arrow head
+    try std.testing.expect(std.mem.indexOf(u8, text, "Start") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "End") != null);
 }
 
 test "CLI fixture density golden output" {

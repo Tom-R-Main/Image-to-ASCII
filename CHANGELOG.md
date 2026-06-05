@@ -53,6 +53,11 @@
 
 ### CLI and Tooling
 
+- Added a `mermaid` CLI subcommand: `image-to-ascii mermaid <file.mmd>
+  [--ascii|--unicode] [--color none|truecolor]` reads a Mermaid flowchart and
+  writes the rendered frame to stdout. Syntax errors are reported to stderr as
+  `file:line:col: message` and exit non-zero. The diagram path stays decoder-free
+  (it reads UTF-8 text, not images), and the existing image CLI is unchanged.
 - Added `docs/TUI_INTEGRATION.md` with the intended live TUI embedding model:
   decoded pixels stay app-owned, `PreparedImage` owns source-derived analysis,
   `RenderWorkspace` owns output/render-shape scratch, `Frame` represents a
