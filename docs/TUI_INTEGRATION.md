@@ -14,7 +14,7 @@ terminal cells or ANSI bytes.
 | `PreparedImage` | Renderer caller | Reuse while source pixels and source-derived options are stable | Source-derived precompute, currently integral luma. Not render-shape scratch. |
 | `RenderWorkspace` | Renderer caller | Reuse while rendering in a loop | Output and render-shape scratch: `Frame` buffers plus `SamplePlan` spans. Not source-owned state. |
 | `Frame` | Renderer caller | One rendered terminal-cell state | Store previous/current frames for full render or diff emission. |
-| ANSI output | TUI / app writer | Per redraw | `renderFrameToWriter` emits a full frame; `renderFrameDiffToWriter` emits dirty row-contiguous runs. |
+| ANSI output | TUI / app writer | Per redraw | `renderFrameToWriter` emits a full frame; `renderFrameDiffToWriter` emits dirty row-contiguous runs when the TUI owns raw terminal output. |
 
 Keep these boundaries strict:
 
@@ -181,44 +181,141 @@ options change. Do not rebuild it merely because the terminal resized.
 
 ## Frame Diff Loop
 
-For a live TUI, keep a previous frame and diff against the workspace frame:
+For a live TUI that writes ANSI itself, keep two reusable workspaces and diff
+the previous frame against the current frame:
 
 ```zig
-var previous: ascii.Frame = .empty;
-defer previous.deinit(allocator);
+var previous_workspace: ascii.RenderWorkspace = .empty;
+defer previous_workspace.deinit(allocator);
 
-var workspace: ascii.RenderWorkspace = .empty;
-defer workspace.deinit(allocator);
+var current_workspace: ascii.RenderWorkspace = .empty;
+defer current_workspace.deinit(allocator);
+
+var has_previous = false;
 
 while (running) {
-    try ascii.renderIntoWorkspace(&workspace, allocator, image, terminal, options);
+    try ascii.renderIntoWorkspace(
+        &current_workspace,
+        allocator,
+        image,
+        terminal,
+        options,
+    );
 
-    if (previous.codepoints.len == 0) {
-        try ascii.renderFrameToWriter(writer, workspace.frame);
+    if (!has_previous) {
+        try ascii.renderFrameToWriter(writer, current_workspace.frame);
+        has_previous = true;
     } else {
         _ = try ascii.renderFrameDiffToWriter(
             writer,
-            &previous,
-            &workspace.frame,
+            &previous_workspace.frame,
+            &current_workspace.frame,
             .{ .origin_row = viewport_row, .origin_col = viewport_col },
         );
     }
 
-    previous.deinit(allocator);
-    previous = workspace.frame;
-    workspace.frame = .empty;
+    std.mem.swap(
+        ascii.RenderWorkspace,
+        &previous_workspace,
+        &current_workspace,
+    );
 }
 ```
 
-The move at the end transfers the rendered frame out of the workspace so it can
-become the next `previous` frame. Setting `workspace.frame = .empty` prevents the
-workspace deinit from freeing the moved frame. The next render will allocate or
-reuse a new frame as needed.
+The swap keeps both `Frame` allocations and both `SamplePlan` allocations alive.
+After the first two same-shape renders, steady-state redraws should reuse the
+existing buffers. This is the preferred pattern for animation, live preview, and
+resize-heavy UI surfaces.
 
 If the viewport origin changes but the rendered cell content is otherwise the
 same, either full-render at the new origin or clear/redraw the old region in the
 owning TUI. The diff writer only compares cell contents and writes relative to
 the origin it is given.
+
+When the shape changes, reset the diff baseline:
+
+```zig
+has_previous = false;
+previous_workspace.deinit(allocator);
+```
+
+Keeping `current_workspace` is still useful; it will reallocate only the parts
+whose shape no longer matches.
+
+## OpenTUI Bridge
+
+When embedding in OpenTUI, prefer a custom renderable over writing ANSI into a
+text widget. OpenTUI already owns the root renderer, layout pass, clipping,
+frame pacing, stdout mode, and dirty scheduling. The image bridge should use the
+renderable's measured cell rectangle as `TerminalProfile.columns` / `rows`,
+render into a reusable workspace, and copy cells into OpenTUI's
+`OptimizedBuffer`.
+
+The practical bridge shape is:
+
+```text
+OpenTUI Renderable
+- owns decoded image pixels or a reference to app-owned pixels
+- owns one image-to-ascii RenderWorkspace for the current rendered cells
+- optionally owns PreparedImage for stable monochrome/integral paths
+- maps renderable width/height -> TerminalProfile
+- copies Frame cells into OptimizedBuffer in renderSelf
+```
+
+At the TypeScript/OpenTUI layer, the renderable should look conceptually like
+this:
+
+```typescript
+class ImageCellRenderable extends Renderable {
+  protected renderSelf(buffer: OptimizedBuffer): void {
+    const columns = this.width
+    const rows = this.height
+    if (columns <= 0 || rows <= 0) return
+
+    nativeImageToAscii.renderIntoWorkspace({
+      workspace: this.currentWorkspace,
+      image: this.imageHandle,
+      terminal: { columns, rows, color: "truecolor" },
+      options: { mode: "partition", partition: "quadrant_2x2", fit: "contain" },
+    })
+
+    nativeImageToAscii.copyFrameToOpenTuiBuffer({
+      frame: this.currentWorkspace.frame,
+      buffer,
+      x: 0,
+      y: 0,
+    })
+  }
+}
+```
+
+For a first Siftable/OpenTUI integration, this can be an app-local FFI bridge.
+Do not make `image-to-ascii` depend on OpenTUI. The stable boundary is still the
+raw `ImageView` input and `Frame` output; OpenTUI-specific code should live in
+the consuming app or a separate adapter package.
+
+Recommended OpenTUI policy:
+
+| Concern | Recommendation |
+| --- | --- |
+| Layout | Use the renderable's measured `width` / `height` as the target cell grid. |
+| Redraw | Call OpenTUI `requestRender()` when source pixels, options, or container size change. |
+| Output | Copy `Frame.codepoints`, `Frame.fg`, and `Frame.bg` into `OptimizedBuffer`; avoid ANSI strings inside text renderables. |
+| Clipping | Let OpenTUI scissor/clipping handle the renderable bounds. Do not pre-crop unless the app wants image pan/zoom. |
+| Diffing | Usually skip `renderFrameDiffToWriter`; OpenTUI has its own frame diff/output pipeline. Keep our diff writer for direct-terminal consumers. |
+| Reuse | Keep one workspace for animation or repeated preview; keep a workspace pair only when bypassing OpenTUI and using `renderFrameDiffToWriter`. |
+
+This keeps the fast path as:
+
+```text
+decoded pixels -> image-to-ascii Frame -> OpenTUI OptimizedBuffer -> OpenTUI renderer
+```
+
+not:
+
+```text
+decoded pixels -> image-to-ascii ANSI -> OpenTUI text parse/render -> terminal
+```
 
 ## Resize Rules
 
@@ -243,6 +340,11 @@ more important than preserving a diff baseline across layout changes.
   `RenderWorkspace`.
 - Do not use `renderFrameDiffToWriter` across frames with different shape or
   color layout unless you explicitly accept a full-render fallback.
+- Do not move `workspace.frame` out of a single workspace every frame in a live
+  loop; use two workspaces and swap them so both frame buffers remain reusable.
+- Do not feed ANSI output into OpenTUI text renderables for live image previews;
+  copy rendered cells into an OpenTUI buffer or use a small app-local native
+  bridge.
 - Do not let the renderer probe the terminal. Pass a complete `TerminalProfile`
   from the TUI.
 - Do not assume glyph-structure is the best quality mode for photos or

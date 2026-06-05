@@ -188,6 +188,12 @@ for (frames) |image| {
 }
 ```
 
+For direct terminal redraws, keep two `RenderWorkspace` values and swap them
+after `renderFrameDiffToWriter` so the previous and current frame buffers both
+remain reusable. For OpenTUI-style embedding, prefer a custom renderable that
+copies `Frame` cells into OpenTUI's `OptimizedBuffer`; avoid piping generated
+ANSI through a text widget. See [docs/TUI_INTEGRATION.md](docs/TUI_INTEGRATION.md).
+
 ### Sampling strategy
 
 `Options.sample_strategy` selects how cells are sampled:

@@ -10,6 +10,11 @@
   rendered cell state, and `renderFrameDiffToWriter` emits dirty ANSI updates.
   The guide includes Siftable-oriented boundaries, resize rules, and mode
   recommendations for screenshots, previews, monochrome output, and line art.
+- Refined the TUI integration guide with the allocation-optimal double-workspace
+  diff loop and OpenTUI-specific embedding guidance: OpenTUI should own layout,
+  clipping, frame pacing, and stdout, while an app-local bridge copies rendered
+  `Frame` cells into an `OptimizedBuffer` instead of routing ANSI through text
+  renderables.
 - Added a CLI/tool-layer real image adapter using `zigimg` for PNG and JPEG
   input. The adapter converts decoded pixels into owned `[]Rgba8` and exposes
   only `ImageView` to the renderer, so `src/root.zig` and the core API remain

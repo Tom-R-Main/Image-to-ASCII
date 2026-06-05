@@ -693,7 +693,9 @@ Must include:
 - first glyph-structure hot-path optimization measured against the quality corpus
   and ANSI-diff benchmark artifact,
 - integration notes for Siftable or another TUI consumer, including
-  `PreparedImage`, `RenderWorkspace`, `Frame`, and ANSI diff ownership.
+  `PreparedImage`, double-buffered `RenderWorkspace` reuse, `Frame`, ANSI diff
+  ownership, and the OpenTUI bridge rule: copy cells into the TUI buffer rather
+  than feeding ANSI through a text renderable.
 
 ### `v0.3.0`: Glyph-Tone
 
@@ -723,6 +725,8 @@ Must include:
 - real-image CLI adapter,
 - permissive licensing confirmed,
 - practical integration examples for Siftable or another TUI consumer.
+- optional app-local OpenTUI adapter proof that maps `Frame` cells into an
+  `OptimizedBuffer` without adding an OpenTUI dependency to core.
 
 ## Risk Register
 
