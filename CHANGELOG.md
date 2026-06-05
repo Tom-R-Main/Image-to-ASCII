@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 - 2026-06-05
 
 ### Added
 
@@ -17,7 +17,7 @@
 - CLI `--input` support for PPM/PAM fixtures.
 - Synthetic benchmark command.
 
-### Planned For v0.1.0
+### Release Notes
 
 - Keep the public API small and documented.
 - Keep core decoder-free and terminal-probing-free.

@@ -1,6 +1,6 @@
 .{
     .name = .image_to_ascii,
-    .version = "0.0.0",
+    .version = "0.1.0",
     .fingerprint = 0x55f66561244cdf41, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
