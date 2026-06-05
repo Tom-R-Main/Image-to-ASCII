@@ -366,14 +366,28 @@ core module still exposes raw `ImageView`/`Rgba8` input and does not export deco
 
 ### `mermaid` subcommand
 
-Render a Mermaid flowchart from a `.mmd` file straight to the terminal:
+Render a Mermaid `.mmd` file straight to the terminal. The diagram type (flowchart or sequence) is auto-detected from the
+header:
 
 ```sh
-# Box-drawing output (truecolor by default):
+# Flowchart, box-drawing output (truecolor by default):
 zig build run -- mermaid testdata/mermaid/flowchart/diamond.mmd
 
-# ASCII fallback, no color (pipe-friendly, deterministic):
-zig build run -- mermaid testdata/mermaid/flowchart/diamond.mmd --ascii --color none
+# Sequence diagram, ASCII fallback, no color (pipe-friendly, deterministic):
+zig build run -- mermaid testdata/mermaid/sequence/basic.mmd --ascii --color none
+```
+
+A sequence diagram renders as ordered lanes with dotted lifelines and stacked messages (`--ascii`):
+
+```text
++-------+      +-----+
+| Alice |      | Bob |
++-------+      +-----+
+    :             :
+    :   Request   :
+    +------------->
+    :  Response   :
+    <.............+
 ```
 
 Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`. Syntax errors are reported to stderr as

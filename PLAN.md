@@ -136,8 +136,17 @@ output.
 
 ### Slice 4: Sequence Diagram Subset
 
-Sequence diagrams use lane/time layout, not graph layout. Start with participants, aliases, solid/dotted/async arrows,
-messages, and self-messages.
+Status: implemented (`src/diagram/{ir,mermaid,layout,render}/...sequence...`).
+
+Sequence diagrams use lane/time layout, not graph layout. The line-based parser
+handles `participant`/`actor` with `as` aliases, implicit participants in
+first-seen order, all eight message arrows (`->`, `-->`, `->>`, `-->>`, `-)`,
+`--)`, `-x`, `--x`), self-messages, and `%%` comments. Layout assigns lanes
+(sized for boxes, adjacent labels, and self-loops), header boxes, and dotted
+lifelines; the renderer stacks messages with labels above arrows and distinct
+heads (filled/open/cross). A `renderMermaid` dispatcher auto-detects the diagram
+type from the header. Golden fixtures: `testdata/mermaid/sequence/*.{mmd,golden.txt}`.
+Deferred: notes, activations, alt/loop/opt blocks, and bottom participant boxes.
 
 ## Milestone 0: Repo Bootstrap
 
@@ -852,8 +861,10 @@ Must include:
 3. ~~Add a CLI `mermaid` subcommand for visual smoke testing actual `.mmd` files.~~ ✅
 4. ~~Render node shapes distinctly (round/circle/diamond) and give dotted/thick
    strokes their own glyphs; place edge labels beside the routing line.~~ ✅
-5. Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.
-6. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+5. ~~Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.~~ ✅
+6. Extend the sequence subset (notes, activations, alt/loop/opt) and add the next
+   Tier-1 diagram (state or class), reusing the graph layout engine.
+7. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
    becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

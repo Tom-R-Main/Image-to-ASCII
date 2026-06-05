@@ -20,6 +20,10 @@ pub const MermaidErrorKind = enum {
     unexpected_token,
     /// Syntax that is valid Mermaid but outside the implemented subset.
     unsupported_syntax,
+    /// (Sequence) A participant identifier was expected at this position.
+    expected_participant,
+    /// (Sequence) The message arrow operator was malformed.
+    invalid_arrow,
 };
 
 pub const MermaidError = struct {

@@ -46,6 +46,22 @@
   and only overlaps the line if the graph is too dense for any clear slot), via a
   new `CellCanvas.isBlank` query. Remaining v0 limitation: self-loops render as a
   small stub.
+- Added the **sequence-diagram** track: a line-based `sequenceDiagram` parser
+  (`src/diagram/mermaid/sequence.zig`) → sequence IR (`src/diagram/ir/sequence.zig`)
+  → lane/time layout (`src/diagram/layout/sequence_layout.zig`) → renderer
+  (`src/diagram/render/sequence_renderer.zig`). Supports `participant`/`actor`
+  with `as` aliases, implicit participants in first-seen order, all eight message
+  arrows (`->`, `-->`, `->>`, `-->>`, `-)`, `--)`, `-x`, `--x`), self-messages, and
+  `%%` comments. Participants get header boxes and dotted lifelines; messages
+  stack top-to-bottom with labels above arrows and distinct heads (filled `►◄`,
+  open async `▷◁`, cross `×`). Added a `renderMermaid` dispatcher that sniffs the
+  header (`flowchart`/`graph`/`sequenceDiagram`) and routes to the right backend.
+  New public API: `parseSequence`, `renderMermaid`, `renderMermaidSequence`,
+  `renderSequence`, `layoutSequence`, `MermaidRenderOptions`,
+  `SequenceRenderOptions`, `SequenceDiagram`, `SequenceLayout`,
+  `SequenceParticipant`, `SequenceMessage`, `DiagramKind`. Golden fixtures in
+  `testdata/mermaid/sequence/`. v0 limitations: header boxes are top-only (no
+  bottom repeat); notes, activations, and alt/loop/opt blocks are not yet parsed.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

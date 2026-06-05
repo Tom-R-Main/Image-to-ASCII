@@ -130,7 +130,7 @@ fn runMermaid(
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4 * 1024 * 1024));
 
     var diagnostic: ?ascii.MermaidError = null;
-    var frame = ascii.renderMermaidFlowchart(allocator, source, .{
+    var frame = ascii.renderMermaid(allocator, source, .{
         .glyph_set = options.glyph_set,
         .color = options.color,
     }, &diagnostic) catch |err| {
@@ -191,9 +191,12 @@ fn writeMermaidUsage(writer: *std.Io.Writer) !void {
         \\  --color none|truecolor   (default truecolor)
         \\  --help
         \\
-        \\Renders a Mermaid flowchart subset (flowchart/graph; TD/TB/LR/RL/BT;
-        \\rect/round/circle/diamond nodes; --> --- -.-> ==> --o --x edges; pipe
-        \\labels; %% comments). Unsupported syntax is reported as file:line:col.
+        \\Renders a Mermaid subset, auto-detected from the header:
+        \\  flowchart/graph — TD/TB/LR/RL/BT; rect/round/circle/diamond nodes;
+        \\                    --> --- -.-> ==> --o --x edges; pipe labels.
+        \\  sequenceDiagram — participants/actors with aliases; ->> -->> -) -x
+        \\                    (and -> --> --) --x) messages; self-messages.
+        \\Comments use %%. Unsupported syntax is reported as file:line:col.
         \\
     );
 }

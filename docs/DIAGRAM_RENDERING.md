@@ -175,14 +175,49 @@ that is safe, such as rendering an unsupported shape as a rectangle.
 3. ~~Diagram IR for graph nodes and edges.~~ ✅
 4. ~~Stable layered graph layout with Manhattan routing.~~ ✅
 5. ~~Flowchart renderer that writes to `CellCanvas`.~~ ✅
-6. Sequence diagram parser and lane/time layout.
-7. Benchmark and golden harness for diagram rendering.
+6. ~~Sequence diagram parser and lane/time layout.~~ ✅
+7. Benchmark and golden harness for diagram rendering (flowchart done; sequence
+   has golden fixtures, benchmark rows pending).
+
+## Sequence Diagrams
+
+The second frontend is sequence diagrams, which use a lane/time layout rather than
+graph layout: `sequenceDiagram text -> parser -> sequence IR -> lane/time layout
+-> CellCanvas -> Frame`. Participants become vertical lanes (a header box plus a
+dotted lifeline); messages stack top-to-bottom in source order with labels above
+the arrows.
+
+```text
++-------+      +-----+
+| Alice |      | Bob |
++-------+      +-----+
+    :             :
+    :   Request   :
+    +------------->
+    :  Response   :
+    <.............+
+    :Async notify :
+    +------------->
+```
+
+Supported: `participant`/`actor` with `as` aliases, implicit participants (created
+in first-seen order), all eight message arrows (`->`, `-->`, `->>`, `-->>`, `-)`,
+`--)`, `-x`, `--x`), self-messages (a small right-side loop), and `%%` comments.
+Heads are distinct: filled `►◄`, open async `▷◁`, cross `×`. Deferred: notes,
+activations, alt/loop/opt blocks, and a repeated participant row at the bottom.
+
+A `renderMermaid` dispatcher detects the diagram type from the header keyword and
+routes to the flowchart or sequence backend, so `image-to-ascii mermaid file.mmd`
+handles either.
+
+## Status and Next
 
 The `mermaid` CLI subcommand is wired (`image-to-ascii mermaid diagram.mmd
 [--ascii|--unicode] [--color none|truecolor]`); syntax errors print as
-`file:line:col: message`. Distinct node shapes, heavy/dotted strokes, and
-off-line edge labels are implemented. Next: the sequence-diagram track (lane/time
-layout), then richer flowchart shapes and crossing reduction.
+`file:line:col: message`. Flowcharts have distinct node shapes, heavy/dotted
+strokes, and off-line edge labels; sequence diagrams cover the v0 subset above.
+Next: extend the sequence subset (notes/activations/alt-loop-opt), then add the
+next Tier-1 diagram (state or class) reusing the graph layout engine.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.
