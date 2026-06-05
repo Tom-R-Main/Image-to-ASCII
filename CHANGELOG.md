@@ -25,6 +25,20 @@
   `parseFlowchart`, `FlowchartResult`, `GraphDiagram`, `Node`, `Edge`,
   `Direction`, `NodeShape`, `LineKind`, `ArrowKind`, `NodeId`, `MermaidError`,
   `MermaidErrorKind`. Layout and rendering of the IR are the next slices.
+- Added a **layered (Sugiyama-style) graph layout** (`src/diagram/layout/`) and a
+  **flowchart renderer** (`src/diagram/render/`) that turn the graph IR into
+  terminal cells via `CellCanvas` → `Frame`. The layout does DFS cycle-breaking,
+  longest-path ranking (honoring per-edge `min_len`), dummy-node insertion for
+  multi-rank edges, median-heuristic in-rank ordering, neighbor-mean coordinate
+  assignment, direction-aware mapping for all four directions, and orthogonal
+  (Manhattan) edge routing. Output is overlap-free by construction and
+  deterministic (not crossing-minimal). New public API: `renderMermaidFlowchart`,
+  `renderGraph`, `GraphRenderOptions`, `GraphRenderError`, `layoutFlowchart`,
+  `Layout`, `LayoutOptions`, `LaidOutNode`, `RoutedEdge`. Golden fixtures live in
+  `testdata/mermaid/flowchart/` and are checked by `zig build test`. v0
+  limitations: all node shapes render as boxes; dotted/thick strokes render with
+  the same light glyphs; edge labels sit on the routing line; self-loops render
+  as a small stub.
 
 ### CLI and Tooling
 

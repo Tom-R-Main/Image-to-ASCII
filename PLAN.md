@@ -101,14 +101,22 @@ form, subgraphs, and `A@{ shape: ... }` general shape syntax.
 
 ### Slice 3: Layered Flowchart Renderer
 
-- normalize direction to an internal top-down layout,
-- assign ranks using longest-path ranking,
-- mark cycles,
-- order nodes inside ranks,
-- assign integer terminal coordinates,
-- route edges with Manhattan paths,
-- place edge labels near path midpoints,
-- render to `CellCanvas`.
+Status: implemented (`src/diagram/layout/layered.zig`, `src/diagram/render/graph_renderer.zig`).
+
+- normalize direction to an internal primary/secondary space, ✅
+- assign ranks using longest-path ranking honoring `min_len`, ✅
+- break cycles via DFS back-edge marking, ✅
+- insert dummy nodes so each edge segment spans one rank, ✅
+- order nodes inside ranks with a median heuristic, ✅
+- assign integer terminal coordinates (neighbor-mean, separation-safe), ✅
+- route edges with orthogonal Manhattan paths through dummy channels, ✅
+- place edge labels near path midpoints, ✅
+- render to `CellCanvas` and export a `Frame`. ✅
+
+Output is overlap-free by construction and deterministic; it is not
+crossing-minimal. Golden fixtures: `testdata/mermaid/flowchart/*.{mmd,golden.txt}`.
+Deferred: distinct node-shape rendering, dotted/thick stroke glyphs, off-line edge
+labels, a CLI `mermaid` subcommand, and a diagram benchmark lab.
 
 ### Slice 4: Sequence Diagram Subset
 

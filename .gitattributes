@@ -1,0 +1,3 @@
+# Diagram golden fixtures are byte-exact renderer output: rows are padded to the
+# full canvas width, so trailing whitespace is significant and must be preserved.
+testdata/mermaid/flowchart/*.golden.txt -whitespace
