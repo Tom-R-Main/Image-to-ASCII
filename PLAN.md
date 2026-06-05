@@ -117,8 +117,10 @@ Output is overlap-free by construction and deterministic; it is not
 crossing-minimal. Golden fixtures: `testdata/mermaid/flowchart/*.{mmd,golden.txt}`.
 A CLI `mermaid` subcommand renders `.mmd` files (`image-to-ascii mermaid <file>
 [--ascii|--unicode] [--color none|truecolor]`) with `file:line:col` diagnostics.
-Deferred: distinct node-shape rendering, dotted/thick stroke glyphs, off-line edge
-labels, and reusable diagram workspaces.
+Node shapes (rect/round/circle/diamond), heavy/dotted edge strokes, and
+occupancy-aware off-line edge labels are implemented (`CellCanvas` gained a
+`Stroke` option and an `isBlank` query). Deferred: self-loops beyond a stub,
+crossing reduction, and reusable diagram workspaces.
 
 Diagram benchmark artifacts now exist:
 
@@ -848,8 +850,8 @@ Must include:
 2. ~~Add a layered graph layout and render the first flowchart subset through
    `CellCanvas`.~~ ✅
 3. ~~Add a CLI `mermaid` subcommand for visual smoke testing actual `.mmd` files.~~ ✅
-4. Render node shapes distinctly (round/circle/diamond) and give dotted/thick
-   strokes their own glyphs; place edge labels beside the routing line.
+4. ~~Render node shapes distinctly (round/circle/diamond) and give dotted/thick
+   strokes their own glyphs; place edge labels beside the routing line.~~ ✅
 5. Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.
 6. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
    becomes the next measured bottleneck.

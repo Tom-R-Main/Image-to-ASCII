@@ -5,6 +5,7 @@ const glyph = @import("glyph_set.zig");
 const joins = @import("line_join.zig");
 
 pub const GlyphSet = glyph.GlyphSet;
+pub const Stroke = joins.Stroke;
 
 pub const Point = struct {
     x: i32,
@@ -25,18 +26,21 @@ pub const TextOptions = struct {
 
 pub const BoxOptions = struct {
     glyph_set: GlyphSet = .unicode_box,
+    stroke: Stroke = .light,
     fg: core.Rgb8 = white,
     bg: core.Rgb8 = black,
 };
 
 pub const LineOptions = struct {
     glyph_set: GlyphSet = .unicode_box,
+    stroke: Stroke = .light,
     fg: core.Rgb8 = white,
     bg: core.Rgb8 = black,
 };
 
 pub const ArrowOptions = struct {
     glyph_set: GlyphSet = .unicode_box,
+    stroke: Stroke = .light,
     fg: core.Rgb8 = white,
     bg: core.Rgb8 = black,
 };
@@ -121,49 +125,32 @@ pub const CellCanvas = struct {
         const right = rect.x + @as(i32, @intCast(rect.width)) - 1;
         const bottom = rect.y + @as(i32, @intCast(rect.height)) - 1;
 
+        const line_opts: LineOptions = .{
+            .glyph_set = opts.glyph_set,
+            .stroke = opts.stroke,
+            .fg = opts.fg,
+            .bg = opts.bg,
+        };
+
         if (rect.width == 1 and rect.height == 1) {
-            self.addLineMask(rect.x, rect.y, joins.east | joins.south | joins.west | joins.north, opts.glyph_set, opts.fg, opts.bg);
+            self.addLineMask(rect.x, rect.y, joins.east | joins.south | joins.west | joins.north, opts.glyph_set, opts.stroke, opts.fg, opts.bg);
             return;
         }
 
         if (rect.width == 1) {
-            try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = rect.x, .y = bottom }, .{
-                .glyph_set = opts.glyph_set,
-                .fg = opts.fg,
-                .bg = opts.bg,
-            });
+            try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = rect.x, .y = bottom }, line_opts);
             return;
         }
 
         if (rect.height == 1) {
-            try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = right, .y = rect.y }, .{
-                .glyph_set = opts.glyph_set,
-                .fg = opts.fg,
-                .bg = opts.bg,
-            });
+            try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = right, .y = rect.y }, line_opts);
             return;
         }
 
-        try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = right, .y = rect.y }, .{
-            .glyph_set = opts.glyph_set,
-            .fg = opts.fg,
-            .bg = opts.bg,
-        });
-        try self.drawLine(.{ .x = right, .y = rect.y }, .{ .x = right, .y = bottom }, .{
-            .glyph_set = opts.glyph_set,
-            .fg = opts.fg,
-            .bg = opts.bg,
-        });
-        try self.drawLine(.{ .x = right, .y = bottom }, .{ .x = rect.x, .y = bottom }, .{
-            .glyph_set = opts.glyph_set,
-            .fg = opts.fg,
-            .bg = opts.bg,
-        });
-        try self.drawLine(.{ .x = rect.x, .y = bottom }, .{ .x = rect.x, .y = rect.y }, .{
-            .glyph_set = opts.glyph_set,
-            .fg = opts.fg,
-            .bg = opts.bg,
-        });
+        try self.drawLine(.{ .x = rect.x, .y = rect.y }, .{ .x = right, .y = rect.y }, line_opts);
+        try self.drawLine(.{ .x = right, .y = rect.y }, .{ .x = right, .y = bottom }, line_opts);
+        try self.drawLine(.{ .x = right, .y = bottom }, .{ .x = rect.x, .y = bottom }, line_opts);
+        try self.drawLine(.{ .x = rect.x, .y = bottom }, .{ .x = rect.x, .y = rect.y }, line_opts);
     }
 
     pub fn drawLine(self: *CellCanvas, from: Point, to: Point, opts: LineOptions) !void {
@@ -176,7 +163,7 @@ pub const CellCanvas = struct {
                 var mask: u4 = 0;
                 if (y > min_y) mask |= joins.north;
                 if (y < max_y) mask |= joins.south;
-                self.addLineMask(from.x, y, mask, opts.glyph_set, opts.fg, opts.bg);
+                self.addLineMask(from.x, y, mask, opts.glyph_set, opts.stroke, opts.fg, opts.bg);
                 if (y == to.y) break;
             }
             return;
@@ -191,7 +178,7 @@ pub const CellCanvas = struct {
                 var mask: u4 = 0;
                 if (x > min_x) mask |= joins.west;
                 if (x < max_x) mask |= joins.east;
-                self.addLineMask(x, from.y, mask, opts.glyph_set, opts.fg, opts.bg);
+                self.addLineMask(x, from.y, mask, opts.glyph_set, opts.stroke, opts.fg, opts.bg);
                 if (x == to.x) break;
             }
             return;
@@ -211,6 +198,7 @@ pub const CellCanvas = struct {
     pub fn drawArrow(self: *CellCanvas, from: Point, to: Point, opts: ArrowOptions) !void {
         try self.drawLine(from, to, .{
             .glyph_set = opts.glyph_set,
+            .stroke = opts.stroke,
             .fg = opts.fg,
             .bg = opts.bg,
         });
@@ -232,6 +220,13 @@ pub const CellCanvas = struct {
         return frame;
     }
 
+    /// Whether the cell holds a space. Out-of-bounds cells report not-blank so
+    /// callers treat them as unavailable for placement.
+    pub fn isBlank(self: *const CellCanvas, x: i32, y: i32) bool {
+        const idx = self.indexOf(x, y) orelse return false;
+        return self.codepoints[idx] == ' ';
+    }
+
     fn putCodepoint(self: *CellCanvas, x: i32, y: i32, codepoint: u21, fg: core.Rgb8, bg: core.Rgb8) void {
         const idx = self.indexOf(x, y) orelse return;
         self.codepoints[idx] = codepoint;
@@ -239,10 +234,10 @@ pub const CellCanvas = struct {
         self.setColor(idx, fg, bg);
     }
 
-    fn addLineMask(self: *CellCanvas, x: i32, y: i32, mask: u4, glyph_set: GlyphSet, fg: core.Rgb8, bg: core.Rgb8) void {
+    fn addLineMask(self: *CellCanvas, x: i32, y: i32, mask: u4, glyph_set: GlyphSet, stroke: Stroke, fg: core.Rgb8, bg: core.Rgb8) void {
         const idx = self.indexOf(x, y) orelse return;
         self.line_masks[idx] |= mask;
-        self.codepoints[idx] = joins.resolve(self.line_masks[idx], glyph_set);
+        self.codepoints[idx] = joins.resolve(self.line_masks[idx], glyph_set, stroke);
         self.setColor(idx, fg, bg);
     }
 

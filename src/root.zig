@@ -47,6 +47,7 @@ pub const PrepareOptions = core.PrepareOptions;
 pub const Quality = core.Quality;
 pub const Rect = canvas.Rect;
 pub const RoutedEdge = layered.RoutedEdge;
+pub const Stroke = canvas.Stroke;
 pub const RenderWorkspace = core.RenderWorkspace;
 pub const RenderMode = core.RenderMode;
 pub const SampleStrategy = core.SampleStrategy;

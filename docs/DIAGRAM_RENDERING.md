@@ -108,11 +108,33 @@ predictable output. Example (`--ascii`):
        +------+
 ```
 
-Known v0 limitations (tracked for later slices): all node shapes render as
-rectangular boxes; `dotted`/`thick` strokes parse but render with the same light
-box-drawing glyphs; edge labels sit on the routing line rather than beside it;
+Node shapes render distinctly (square `rect`, rounded `round`, capsule `circle`,
+diagonal-corner `diamond`), `==>`/`-.->` edges use heavy/dotted glyphs, and edge
+labels are placed beside the routing line (occupancy-aware, falling back to the
+line only when the graph is too dense for a clear slot). Remaining v0 limitation:
 self-loops render as a small stub. Golden fixtures live in
 `testdata/mermaid/flowchart/` and are checked by `zig build test`.
+
+```text
+ ┌──────┐
+ │ Rect │
+ └──────┘
+     │
+     ▼
+ ╭───────╮
+ │ Round │
+ ╰───────╯
+     ┆          (dotted edge)
+     ▼
+╭────────╮
+( Circle )
+╰────────╯
+     ┃          (thick edge)
+     ▼
+╱─────────╲
+│ Diamond │
+╲─────────╱
+```
 
 Diagram performance is tracked separately from image rendering:
 
@@ -158,8 +180,9 @@ that is safe, such as rendering an unsupported shape as a rectangle.
 
 The `mermaid` CLI subcommand is wired (`image-to-ascii mermaid diagram.mmd
 [--ascii|--unicode] [--color none|truecolor]`); syntax errors print as
-`file:line:col: message`. Next: distinct node-shape rendering, dotted/thick
-strokes, off-line edge labels, and the sequence-diagram track.
+`file:line:col: message`. Distinct node shapes, heavy/dotted strokes, and
+off-line edge labels are implemented. Next: the sequence-diagram track (lane/time
+layout), then richer flowchart shapes and crossing reduction.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

@@ -204,8 +204,9 @@ Supported: `flowchart`/`graph` headers, directions `TD`/`TB`/`LR`/`RL`/`BT`, nod
 `--x`), edge chains, pipe edge labels (`A -->|label| B`), and `%%` comments. The lexer reproduces Mermaid's `A---oB`
 circle-edge trap, and the parser rejects lowercase `end` as a node id with a precise diagnostic instead of emitting the
 broken graph real Mermaid produces. On any syntax error it returns `error.MermaidSyntax` and fills `diagnostic` with a
-kind plus 1-based line/column — actionable feedback for an agent fixing its own output. v0 rendering limitations: all node
-shapes draw as boxes, dotted/thick strokes use the same light glyphs, and edge labels sit on the routing line. See
+kind plus 1-based line/column — actionable feedback for an agent fixing its own output. Node shapes render distinctly
+(square/rounded/capsule/diamond), `==>`/`-.->` edges get heavy/dotted glyphs, and edge labels are placed beside the
+routing line. The remaining v0 limitation is that self-loops render as a small stub. See
 [docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md).
 
 ### Render modes and support matrix

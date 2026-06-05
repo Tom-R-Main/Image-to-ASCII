@@ -35,10 +35,17 @@
   deterministic (not crossing-minimal). New public API: `renderMermaidFlowchart`,
   `renderGraph`, `GraphRenderOptions`, `GraphRenderError`, `layoutFlowchart`,
   `Layout`, `LayoutOptions`, `LaidOutNode`, `RoutedEdge`. Golden fixtures live in
-  `testdata/mermaid/flowchart/` and are checked by `zig build test`. v0
-  limitations: all node shapes render as boxes; dotted/thick strokes render with
-  the same light glyphs; edge labels sit on the routing line; self-loops render
-  as a small stub.
+  `testdata/mermaid/flowchart/` and are checked by `zig build test`.
+- Distinct node-shape and edge-stroke rendering. Nodes now draw shape-specific
+  borders — square `rect`, rounded `round`, rounded+parenthesis `circle`
+  (capsule), and diagonal-corner `diamond` — with ASCII fallbacks. `CellCanvas`
+  gained a `Stroke` option (`light`/`heavy`/`dotted`) plus heavy and dotted
+  box-drawing/ASCII join tables, so `thick` (`==>`) and `dotted` (`-.->`) edges
+  render with their own glyphs. Edge labels are now placed beside the routing
+  line (occupancy-aware: it tries above/below or left/right of the path midpoint
+  and only overlaps the line if the graph is too dense for any clear slot), via a
+  new `CellCanvas.isBlank` query. Remaining v0 limitation: self-loops render as a
+  small stub.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's
