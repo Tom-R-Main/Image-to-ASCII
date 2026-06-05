@@ -58,6 +58,7 @@ const Parser = struct {
     participants: std.ArrayList(ir.Participant) = .empty,
     events: std.ArrayList(ir.Event) = .empty,
     index: std.StringHashMapUnmanaged(ir.ParticipantId) = .empty,
+    block_depth: u32 = 0,
 
     fn run(self: *Parser, source: []const u8) ParseError!ir.SequenceDiagram {
         var line_no: u32 = 0;
@@ -83,6 +84,9 @@ const Parser = struct {
         if (!seen_header) {
             return self.fail(.missing_header, 1, 1, "expected 'sequenceDiagram' header");
         }
+        if (self.block_depth != 0) {
+            return self.fail(.unexpected_token, line_no, 1, "unclosed block: expected 'end'");
+        }
 
         return .{
             .participants = try self.participants.toOwnedSlice(self.arena),
@@ -106,6 +110,25 @@ const Parser = struct {
         }
         if (eqlIgnoreCase(first, "deactivate")) {
             return self.parseActivation(line[first.len..], line_no, false);
+        }
+        if (blockKind(first)) |kind| {
+            const label = std.mem.trim(u8, line[first.len..], " \t\r");
+            self.block_depth += 1;
+            return self.events.append(self.arena, .{ .block_start = .{ .kind = kind, .label = try self.arena.dupe(u8, label) } });
+        }
+        if (eqlIgnoreCase(first, "else") or eqlIgnoreCase(first, "and")) {
+            if (self.block_depth == 0) {
+                return self.fail(.unexpected_token, line_no, 1, "'else'/'and' must appear inside a block");
+            }
+            const label = std.mem.trim(u8, line[first.len..], " \t\r");
+            return self.events.append(self.arena, .{ .block_else = try self.arena.dupe(u8, label) });
+        }
+        if (eqlIgnoreCase(first, "end")) {
+            if (self.block_depth == 0) {
+                return self.fail(.unexpected_token, line_no, 1, "'end' has no matching block");
+            }
+            self.block_depth -= 1;
+            return self.events.append(self.arena, .block_end);
         }
         return self.parseMessage(line, line_no);
     }
@@ -353,6 +376,14 @@ fn isIdentChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
+fn blockKind(word: []const u8) ?ir.BlockKind {
+    if (eqlIgnoreCase(word, "alt")) return .alt;
+    if (eqlIgnoreCase(word, "opt")) return .opt;
+    if (eqlIgnoreCase(word, "loop")) return .loop;
+    if (eqlIgnoreCase(word, "par")) return .par;
+    return null;
+}
+
 fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |ca, cb| {
@@ -481,6 +512,52 @@ test "comments are ignored" {
     defer r.deinit();
     try testing.expectEqual(@as(usize, 1), r.diagram.events.len);
     try testing.expectEqualStrings("hi", messageAt(r.diagram, 0).text);
+}
+
+test "parses an alt block with an else section" {
+    var r = try parseForTest(
+        \\sequenceDiagram
+        \\    alt is valid
+        \\        A->>B: ok
+        \\    else invalid
+        \\        A->>B: nope
+        \\    end
+    );
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 5), r.diagram.events.len);
+    try testing.expectEqual(ir.BlockKind.alt, r.diagram.events[0].block_start.kind);
+    try testing.expectEqualStrings("is valid", r.diagram.events[0].block_start.label);
+    try testing.expectEqualStrings("invalid", r.diagram.events[2].block_else);
+    try testing.expect(r.diagram.events[4] == .block_end);
+}
+
+test "parses nested loop and opt blocks" {
+    var r = try parseForTest(
+        \\sequenceDiagram
+        \\    loop every minute
+        \\        opt cached
+        \\            A->>B: ping
+        \\        end
+        \\    end
+    );
+    defer r.deinit();
+    try testing.expectEqual(ir.BlockKind.loop, r.diagram.events[0].block_start.kind);
+    try testing.expectEqual(ir.BlockKind.opt, r.diagram.events[1].block_start.kind);
+    try testing.expect(r.diagram.events[3] == .block_end);
+    try testing.expect(r.diagram.events[4] == .block_end);
+}
+
+test "rejects an unclosed block" {
+    var diag: ?MermaidError = null;
+    const r = parseSequence(testing.allocator, "sequenceDiagram\n loop forever\n A->>B: hi\n", &diag);
+    try testing.expectError(error.MermaidSyntax, r);
+    try testing.expectEqual(MermaidErrorKind.unexpected_token, diag.?.kind);
+}
+
+test "rejects a stray end" {
+    var diag: ?MermaidError = null;
+    const r = parseSequence(testing.allocator, "sequenceDiagram\n A->>B: hi\n end\n", &diag);
+    try testing.expectError(error.MermaidSyntax, r);
 }
 
 test "rejects a missing header" {

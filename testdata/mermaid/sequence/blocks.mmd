@@ -1,0 +1,10 @@
+sequenceDiagram
+    A->>B: request
+    alt is valid
+        B->>A: ok
+    else invalid
+        B->>A: error
+    end
+    opt logging
+        A->>A: log
+    end

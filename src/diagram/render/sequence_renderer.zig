@@ -20,6 +20,7 @@ pub const SequenceRenderOptions = struct {
     message_fg: core.Rgb8 = .{ .r = 150, .g = 180, .b = 220 },
     note_fg: core.Rgb8 = .{ .r = 30, .g = 30, .b = 30 },
     note_bg: core.Rgb8 = .{ .r = 220, .g = 205, .b = 140 },
+    block_fg: core.Rgb8 = .{ .r = 120, .g = 160, .b = 130 },
     bg: core.Rgb8 = .{ .r = 0, .g = 0, .b = 0 },
 };
 
@@ -67,20 +68,28 @@ pub fn renderSequence(
         }
     }
 
-    // 2. Header boxes and participant labels.
+    // 2. Block frames (behind messages and notes).
+    const frame_box: cc.BoxOptions = .{ .glyph_set = options.glyph_set, .fg = options.block_fg, .bg = options.bg };
+    const block_text: cc.TextOptions = .{ .fg = options.block_fg, .bg = options.bg };
+    const divider_opts: cc.LineOptions = .{ .glyph_set = options.glyph_set, .stroke = .dotted, .fg = options.block_fg, .bg = options.bg };
+    for (lay.blocks) |blk| {
+        try drawBlock(&canvas, blk, frame_box, block_text, divider_opts);
+    }
+
+    // 3. Header boxes and participant labels.
     for (lay.participants) |p| {
         try canvas.drawBox(toCanvasRect(p.rect), box_opts);
         try drawCenteredLabel(&canvas, p.rect, p.label, participant_text);
     }
 
-    // 3. Notes (boxes that overlay the lifelines they annotate).
+    // 4. Notes (boxes that overlay the lifelines they annotate).
     for (lay.notes) |note| {
         try fillRect(&canvas, note.rect, note_text);
         try canvas.drawBox(toCanvasRect(note.rect), note_box);
         try drawCenteredLabel(&canvas, note.rect, note.text, note_text);
     }
 
-    // 3. Message shafts.
+    // 5. Message shafts.
     for (lay.messages) |m| {
         const line_opts: cc.LineOptions = .{
             .glyph_set = options.glyph_set,
@@ -99,12 +108,12 @@ pub fn renderSequence(
         }
     }
 
-    // 4. Arrowheads (drawn after shafts so they stay visible at the lifeline).
+    // 6. Arrowheads (drawn after shafts so they stay visible at the lifeline).
     for (lay.messages) |m| {
         try drawHead(&canvas, m, options.glyph_set, message_text);
     }
 
-    // 5. Message labels last, so they stay readable over lifelines.
+    // 7. Message labels last, so they stay readable over lifelines.
     for (lay.messages) |m| {
         if (m.label.len > 0) {
             try canvas.drawText(m.label_at.x, m.label_at.y, m.label, message_text);
@@ -147,6 +156,48 @@ fn drawPolyline(canvas: *cc.CellCanvas, points: []const seqlayout.Point, opts: c
             opts,
         );
     }
+}
+
+/// Draw a labeled block frame (`alt`/`opt`/`loop`/`par`) with its `else`/`and`
+/// dividers. The frame sits behind messages; its title overwrites the top
+/// border, and each divider is a dotted rule across the interior.
+fn drawBlock(canvas: *cc.CellCanvas, blk: seqlayout.LaidBlock, frame: cc.BoxOptions, text: cc.TextOptions, divider: cc.LineOptions) !void {
+    try canvas.drawBox(toCanvasRect(blk.rect), frame);
+
+    var x = blk.rect.x + 2;
+    x = try drawAt(canvas, x, blk.rect.y, kindLabel(blk.kind), text);
+    if (blk.label.len > 0) {
+        x = try drawAt(canvas, x, blk.rect.y, " [", text);
+        x = try drawAt(canvas, x, blk.rect.y, blk.label, text);
+        x = try drawAt(canvas, x, blk.rect.y, "]", text);
+    }
+
+    const left = blk.rect.x;
+    const right = blk.rect.x + @as(i32, @intCast(blk.rect.width)) - 1;
+    for (blk.dividers) |d| {
+        try canvas.drawLine(.{ .x = left, .y = d.y }, .{ .x = right, .y = d.y }, divider);
+        var dx = blk.rect.x + 2;
+        if (d.label.len > 0) {
+            dx = try drawAt(canvas, dx, d.y, "[", text);
+            dx = try drawAt(canvas, dx, d.y, d.label, text);
+            _ = try drawAt(canvas, dx, d.y, "]", text);
+        }
+    }
+}
+
+fn kindLabel(kind: ir.BlockKind) []const u8 {
+    return switch (kind) {
+        .alt => "alt",
+        .opt => "opt",
+        .loop => "loop",
+        .par => "par",
+    };
+}
+
+/// Draw `s` at (x, y) and return the x just past it (advancing by display width).
+fn drawAt(canvas: *cc.CellCanvas, x: i32, y: i32, s: []const u8, opts: cc.TextOptions) !i32 {
+    try canvas.drawText(x, y, s, opts);
+    return x + @as(i32, @intCast(text_measure.width(s) catch s.len));
 }
 
 /// Paint a rectangle of spaces so an overlay (e.g. a note) hides the lifeline
@@ -299,13 +350,25 @@ test "note renders a labeled box" {
     try testing.expect(std.mem.indexOf(u8, text, "+-") != null);
 }
 
+test "block frame renders its kind and condition" {
+    const text = try renderToText(testing.allocator,
+        \\sequenceDiagram
+        \\    alt valid
+        \\        A->>B: ok
+        \\    end
+    );
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "alt") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "valid") != null);
+}
+
 test "sequence golden fixtures" {
     var threaded: std.Io.Threaded = .init(testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
     const dir = "testdata/mermaid/sequence/";
 
-    const bases = [_][]const u8{ "basic", "self_message", "activations", "notes" };
+    const bases = [_][]const u8{ "basic", "self_message", "activations", "notes", "blocks" };
     for (bases) |base| {
         const mmd_path = try std.fmt.allocPrint(testing.allocator, "{s}{s}.mmd", .{ dir, base });
         defer testing.allocator.free(mmd_path);

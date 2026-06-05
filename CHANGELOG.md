@@ -69,8 +69,17 @@
   (nestable); active lifeline spans render as a solid heavy segment (`┃` / `|`)
   against the dotted idle lifeline (`┆` / `:`). New IR/layout types:
   `Note`, `NotePlacement`, `Event`, plus `LaidNote` and lifeline `active`
-  intervals. v0 limitations remaining: alt/loop/opt/par block frames are not yet
-  parsed, and header boxes are top-only.
+  intervals.
+- Added **block frames** to sequence diagrams: `alt`/`opt`/`loop`/`par` with
+  `else`/`and` sections and `end`, including nesting. Each block renders as a
+  labeled frame (`alt [is valid]`) around its events, sized to fit both the
+  enclosed geometry and the title/section labels; nested frames are enclosed by
+  their parents; `else`/`and` render as dotted dividers with their condition. The
+  parser validates matched `end`s and rejects stray `end`/`else` and unclosed
+  blocks. New IR/layout types: `BlockKind`, `Block`, the `block_start`/
+  `block_else`/`block_end` events, `LaidBlock`, and `Divider`. v0 limitations
+  remaining: header boxes are top-only, and `critical`/`break`/`rect` blocks are
+  not parsed.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

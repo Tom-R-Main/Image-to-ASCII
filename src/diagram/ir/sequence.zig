@@ -64,12 +64,29 @@ pub const Note = struct {
     text: []const u8,
 };
 
-/// One ordered item in the diagram timeline.
+pub const BlockKind = enum {
+    alt, // alternative paths (with `else` sections)
+    opt, // optional
+    loop, // repeated
+    par, // parallel (with `and` sections)
+};
+
+pub const Block = struct {
+    kind: BlockKind,
+    /// Condition/description text, e.g. `is valid` or `retry x3`.
+    label: []const u8,
+};
+
+/// One ordered item in the diagram timeline. Blocks (`alt`/`opt`/`loop`/`par`)
+/// bracket a run of events with `block_start` … (`block_else`) … `block_end`.
 pub const Event = union(enum) {
     message: Message,
     note: Note,
     activate: ParticipantId,
     deactivate: ParticipantId,
+    block_start: Block,
+    block_else: []const u8, // `else`/`and` section label
+    block_end: void,
 };
 
 pub const SequenceDiagram = struct {

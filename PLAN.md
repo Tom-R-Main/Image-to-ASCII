@@ -148,8 +148,10 @@ heads (filled/open/cross). A `renderMermaid` dispatcher auto-detects the diagram
 type from the header. Notes (`left of`/`right of`/`over`, including `over A,B`)
 and activations (`->>+`/`-->>-` suffixes plus standalone `activate`/`deactivate`,
 nestable; active spans render as a solid heavy lifeline segment) are implemented.
-Golden fixtures: `testdata/mermaid/sequence/*.{mmd,golden.txt}`. Deferred:
-alt/loop/opt/par block frames and bottom participant boxes.
+Block frames (`alt`/`opt`/`loop`/`par` with `else`/`and`/`end`, nestable) render
+as labeled frames around their events. Golden fixtures:
+`testdata/mermaid/sequence/*.{mmd,golden.txt}`. Deferred: `critical`/`break`/`rect`
+blocks and bottom participant boxes.
 
 ## Milestone 0: Repo Bootstrap
 
@@ -865,9 +867,9 @@ Must include:
 4. ~~Render node shapes distinctly (round/circle/diamond) and give dotted/thick
    strokes their own glyphs; place edge labels beside the routing line.~~ ✅
 5. ~~Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.~~ ✅
-6. Extend the sequence subset (notes, activations, alt/loop/opt) and add the next
-   Tier-1 diagram (state or class), reusing the graph layout engine.
-7. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+6. ~~Extend the sequence subset (notes, activations, alt/loop/opt).~~ ✅
+7. Add the next Tier-1 diagram (state or class), reusing the graph layout engine.
+8. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
    becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.
