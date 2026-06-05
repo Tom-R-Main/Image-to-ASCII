@@ -392,8 +392,9 @@ A sequence diagram renders as ordered lanes with dotted lifelines and stacked me
 
 Sequence diagrams support participants/actors, all message arrows, self-messages, notes, activations, and
 alt/opt/loop/par blocks. State diagrams (`stateDiagram-v2`) support states, `[*]` start/end, and labeled transitions.
-Class diagrams (`classDiagram`) render classes as compartment cards with UML relationship ends, and (like state
-diagrams) reuse the flowchart graph layout:
+Class diagrams (`classDiagram`) render classes as compartment cards with UML relationship ends, and ER diagrams
+(`erDiagram`) render entities as attribute cards with cardinality (`1`/`0..N`/`1..N`) at each relationship end. Both (like
+state diagrams) reuse the flowchart graph layout and the compartment-node renderer:
 
 ```text
 +---------------+

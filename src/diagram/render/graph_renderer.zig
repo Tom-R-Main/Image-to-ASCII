@@ -11,6 +11,7 @@ const layered = @import("../layout/layered.zig");
 const flowchart = @import("../mermaid/flowchart.zig");
 const state = @import("../mermaid/state.zig");
 const class = @import("../mermaid/class.zig");
+const er = @import("../mermaid/er.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -78,6 +79,13 @@ pub fn renderGraph(
         if (edge.label) |label| try drawEdgeLabel(&canvas, edge, label, edge_text);
     }
 
+    // 5. Per-endpoint annotations (e.g. ER cardinality) beside each end.
+    for (lay.edges) |edge| {
+        const e = diagram.edges[edge.edge_index];
+        if (e.from_end) |t| try drawEndLabel(&canvas, edge.points, true, t, edge_text);
+        if (e.to_end) |t| try drawEndLabel(&canvas, edge.points, false, t, edge_text);
+    }
+
     return canvas.toFrame(gpa);
 }
 
@@ -116,6 +124,19 @@ pub fn renderMermaidClass(
     diagnostic: *?class.MermaidError,
 ) (GraphRenderError || class.ParseError)!core.Frame {
     var parsed = try class.parseClass(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a Mermaid ER diagram and render it. Entities become single-compartment
+/// cards; cardinality renders as multiplicity text at each endpoint.
+pub fn renderMermaidEr(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?er.MermaidError,
+) (GraphRenderError || er.ParseError)!core.Frame {
+    var parsed = try er.parseEr(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -240,6 +261,32 @@ fn drawEdgeLabel(canvas: *cc.CellCanvas, edge: layered.RoutedEdge, label: []cons
         }
     }
     try canvas.drawText(mid.point.x - @divTrunc(w, 2), mid.point.y, label, opts);
+}
+
+/// Place a short annotation beside one endpoint of an edge (the source if
+/// `at_source`). Tries to the side of the local segment (right/left of a vertical
+/// run, above/below a horizontal one), taking the first clear slot.
+fn drawEndLabel(canvas: *cc.CellCanvas, points: []const layered.Point, at_source: bool, text: []const u8, opts: cc.TextOptions) !void {
+    if (points.len < 2) return;
+    const w: i32 = @intCast(text_measure.width(text) catch return);
+    const p = if (at_source) points[0] else points[points.len - 1];
+    const q = if (at_source) points[1] else points[points.len - 2];
+
+    var candidates: [2]layered.Point = undefined;
+    if (p.x == q.x) { // vertical segment → sit to the side
+        candidates[0] = .{ .x = p.x + 1, .y = p.y };
+        candidates[1] = .{ .x = p.x - w, .y = p.y };
+    } else { // horizontal segment → sit above/below
+        candidates[0] = .{ .x = p.x - @divTrunc(w, 2), .y = p.y - 1 };
+        candidates[1] = .{ .x = p.x - @divTrunc(w, 2), .y = p.y + 1 };
+    }
+    for (candidates) |c| {
+        if (rowIsBlank(canvas, c.x, c.y, w)) {
+            try canvas.drawText(c.x, c.y, text, opts);
+            return;
+        }
+    }
+    try canvas.drawText(candidates[0].x, candidates[0].y, text, opts);
 }
 
 fn rowIsBlank(canvas: *const cc.CellCanvas, x: i32, y: i32, w: i32) bool {
@@ -478,6 +525,34 @@ test "renders a class diagram as a compartment card (golden)" {
     const got = try frameToText(testing.allocator, frame);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings(golden, got);
+}
+
+test "renders an ER diagram with entity cards and cardinality (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/er/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/er/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+
+    var diag: ?er.MermaidError = null;
+    var frame = try renderMermaidEr(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "ER cardinality text appears at both ends of a relationship" {
+    var diag: ?er.MermaidError = null;
+    var frame = try renderMermaidEr(testing.allocator, "erDiagram\n CUSTOMER ||--o{ ORDER\n", .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const text = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "1") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "0..N") != null);
 }
 
 test "class card has two compartments and a unicode inheritance triangle" {

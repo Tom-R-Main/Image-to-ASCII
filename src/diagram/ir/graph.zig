@@ -84,6 +84,10 @@ pub const Edge = struct {
     /// Class hierarchy/containment ends sit at the parent/whole, which layout
     /// places at the source so it ends up on top.
     head_at_source: bool = false,
+    /// Short text rendered beside the source/target endpoints — e.g. ER
+    /// cardinality (`1`, `0..N`). Null means no end annotation.
+    from_end: ?[]const u8 = null,
+    to_end: ?[]const u8 = null,
     /// Minimum rank distance the layout engine must place between endpoints.
     /// Authors lengthen an edge by adding dashes (`A ---> B`), which raises this.
     min_len: u8 = 1,

@@ -873,9 +873,12 @@ Must include:
    pane-fit flags, so diagrams are usable inside fixed terminal/TUI panes.~~ ✅
 9. ~~Add the class diagram (graph-layout with a reusable compartment-node
    renderer).~~ ✅
-10. Reuse the compartment-node renderer for ER / requirement / architecture / C4
-    cards; spread multiple same-side class decorations across the parent's edge.
-11. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+10. ~~Add the ER diagram (entity cards + cardinality), reusing the compartment-node
+    renderer.~~ ✅
+11. Include end-label/cardinality extents in the layout's size so they never clip;
+    reuse the card renderer for requirement / architecture / C4 cards; spread
+    multiple same-side class decorations across the parent's edge.
+12. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
     becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

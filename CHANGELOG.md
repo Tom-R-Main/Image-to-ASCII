@@ -108,6 +108,19 @@
   relationships they share the exit port (last-drawn decoration wins); generics,
   annotations, namespaces, and multiplicities are not parsed; aggregation
   `o--`/`--o` needs a space around the `o`.
+- Added an **entity-relationship (ER) diagram** frontend (`erDiagram`), reusing
+  the compartment-node renderer: entities are single-compartment cards (header +
+  attribute lines). Relationships carry **cardinality at both ends**, supported by
+  a new `Edge.from_end`/`Edge.to_end` (short text drawn beside each endpoint) and
+  an end-label placement step in the renderer. Crow's-foot tokens
+  (`||` `|o` `o|` `}o` `o{` `}|` `|{`) map to multiplicity text (`1`, `0..1`,
+  `1..N`, `0..N`) — a cell grid can't draw crow's feet faithfully — joined by `--`
+  (identifying, solid) or `..` (non-identifying, dashed), with an optional verb
+  label. New public API: `parseEr`, `renderMermaidEr`. Golden fixture in
+  `testdata/mermaid/er/`. v0 limitations: entity names are `[A-Za-z0-9_]`
+  (hyphenated/quoted names unsupported); attribute key/comment columns render
+  verbatim; end labels can clip on very narrow diagrams (they aren't yet included
+  in the layout's size).
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

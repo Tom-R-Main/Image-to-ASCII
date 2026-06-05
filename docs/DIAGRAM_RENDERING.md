@@ -277,8 +277,37 @@ decoration at the source. Deferred: generics/annotations/namespaces,
 multiplicities, and spreading multiple same-side decorations across the parent's
 edge (today two source-decorated relationships share the exit port).
 
+## Entity-Relationship Diagrams
+
+ER diagrams (`src/diagram/mermaid/er.zig`) reuse the compartment-node renderer:
+each entity is a single-compartment card (header + attribute lines). Relationships
+carry cardinality at **both** ends, supported by `Edge.from_end`/`Edge.to_end`
+(short text drawn beside each endpoint). A cell grid can't draw crow's feet
+faithfully, so the tokens map to multiplicity text — `||`→`1`, `|o`/`o|`→`0..1`,
+`}|`/`|{`→`1..N`, `}o`/`o{`→`0..N` — joined by `--` (identifying, solid) or `..`
+(non-identifying, dashed), with an optional verb label at the midpoint.
+
+```text
++-------------------+
+|     CUSTOMER      |
++-------------------+
+| string name       |
+| string custNumber |
++-------------------+
+          |1
+          |places
+          |0..N
+      +-------+
+      | ORDER |
+      +-------+
+```
+
+Deferred: hyphenated/quoted entity names, attribute key/comment columns, and
+including end-label extents in the layout's size (today they can clip on a very
+narrow diagram).
+
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart, sequence, state, or class backend, so
+routes to the flowchart, sequence, state, class, or ER backend, so
 `cell-render mermaid file.mmd` handles any of them.
 
 ## Bounded Panes (Viewport)
@@ -309,14 +338,15 @@ size). With no bounds, output is natural (unchanged).
 
 ## Status and Next
 
-The `mermaid` CLI subcommand renders flowchart, sequence, state, and class
+The `mermaid` CLI subcommand renders flowchart, sequence, state, class, and ER
 diagrams (`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
 plus the viewport flags above); syntax errors print as `file:line:col: message`.
 Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
 labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
-class diagrams render compartment cards with UML relationship ends. Next: reuse
-the compartment-node renderer for ER/requirement/architecture/C4 cards, and
-richer state features.
+class and ER diagrams render compartment cards (with UML relationship ends and
+cardinality respectively). Next: reuse the card renderer for
+requirement/architecture/C4 cards, and fold end-label extents into the layout's
+size so cardinality never clips.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.
