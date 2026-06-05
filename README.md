@@ -1,4 +1,4 @@
-# Image to ASCII
+# Cell Render
 
 Zig-first terminal image rendering for libraries and TUIs.
 
