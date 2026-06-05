@@ -12,6 +12,37 @@ raw RGBA -> aspect-correct sampler -> density / block / glyph renderer -> Frame 
 
 The durable product is a small, embeddable renderer for TUI apps, with Siftable as the first integration target.
 
+## Demo
+
+![reference vs. quadrant-truecolor reconstruction](docs/hank-comparison.png)
+
+Left: the source frame downscaled to the cell grid. Right: the same frame rendered to terminal cells and decoded
+back to pixels. At a `120x40` target this resolves to a `107x40` cell grid and scores **PSNR 28.06 dB / SSIM 0.946 /
+edge-correlation 0.945** against the reference.
+
+GitHub markdown can't display truecolor ANSI, so the right pane is the quality harness' pixel reconstruction of the
+emitted cells (each quadrant cell painted as its exact 2×2 subblock with the solved foreground/background colors), not a
+terminal screenshot. It was generated exactly as:
+
+```sh
+# 1. Downscale the source screenshot to a PPM the harness can read (decoder lives outside core):
+magick king-of-the-hill.jpeg -resize 1024x testdata/generated/hank.ppm
+
+# 2. Render to quadrant truecolor cells, then reconstruct + score and write both pixel buffers:
+zig build compare -- --input testdata/generated/hank.ppm \
+    --width 120 --height 40 --mode partition --partition quadrant --color truecolor --fit contain \
+    --write-recon tools/out/hank-recon.ppm --write-ref tools/out/hank-ref.ppm
+
+# 3. Upscale 3× nearest-neighbor and stitch the labeled side-by-side:
+magick tools/out/hank-ref.ppm   -filter point -resize 300% docs/_ref.png
+magick tools/out/hank-recon.ppm -filter point -resize 300% docs/_recon.png
+magick \( docs/_ref.png -gravity North -background '#1d1f21' -splice 0x28 \
+            -fill white -pointsize 18 -annotate +0+4 'reference (downscaled to cell grid)' \) \
+       \( docs/_recon.png -gravity North -background '#1d1f21' -splice 0x28 \
+            -fill white -pointsize 18 -annotate +0+4 'quadrant truecolor reconstruction' \) \
+       +append -background '#1d1f21' -bordercolor '#1d1f21' -border 8 docs/hank-comparison.png
+```
+
 ## Design Commitments
 
 - raw RGBA `ImageView` input — the caller owns the pixels,
