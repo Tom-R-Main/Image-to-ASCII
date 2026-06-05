@@ -91,6 +91,23 @@
   dispatcher now detects `stateDiagram`/`stateDiagram-v2` too. New public API:
   `parseState`, `renderMermaidState`. Golden fixture in `testdata/mermaid/state/`.
   Deferred: composite states, choice/fork/join, and notes.
+- Added a **compartment-node renderer** and a **class-diagram** frontend
+  (`classDiagram`). The graph IR `Node` gained optional `compartments` (a header
+  plus stacked sections) and the renderer draws them as a "card"
+  (`+----+ / name / +----+ / attrs / +----+ / methods / +----+`); `cardHeight`
+  is shared by layout and renderer so the card exactly fills its rect. The graph
+  IR also gained UML endpoint decorations (`ArrowKind.triangle`/`diamond`/
+  `diamond_filled`) and `Edge.head_at_source`. The parser
+  (`src/diagram/mermaid/class.zig`) lowers classes to compartment cards and
+  relationships to edges — inheritance `<|--`/`--|>`, composition `*--`/`--*`,
+  aggregation `o--`/`--o`, association `-->`/`<--`/`--`, dependency `..>`/`<..`,
+  realization `..|>`/`<|..`, each with an optional `: label` — placing the
+  parent/whole on top with its decoration. Reuses the layered layout and graph
+  renderer. New public API: `parseClass`, `renderMermaidClass`. Golden fixture in
+  `testdata/mermaid/class/`. v0 limitations: when a class has two source-decorated
+  relationships they share the exit port (last-drawn decoration wins); generics,
+  annotations, namespaces, and multiplicities are not parsed; aggregation
+  `o--`/`--o` needs a space around the `o`.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

@@ -391,8 +391,25 @@ A sequence diagram renders as ordered lanes with dotted lifelines and stacked me
 ```
 
 Sequence diagrams support participants/actors, all message arrows, self-messages, notes, activations, and
-alt/opt/loop/par blocks. State diagrams (`stateDiagram-v2`) support states, `[*]` start/end, and labeled transitions, and
-reuse the flowchart graph layout.
+alt/opt/loop/par blocks. State diagrams (`stateDiagram-v2`) support states, `[*]` start/end, and labeled transitions.
+Class diagrams (`classDiagram`) render classes as compartment cards with UML relationship ends, and (like state
+diagrams) reuse the flowchart graph layout:
+
+```text
++---------------+
+|     User      |
++---------------+
+| +String id    |
++---------------+
+| +login() bool |
++---------------+
+        ^
+        +-----------+
+        v           |
+   +---------+  +-------+
+   | Session |  | Admin |
+   +---------+  +-------+
+```
 
 To fit a diagram into a bounded TUI pane, pass viewport flags (the built binary is `cell-render`):
 

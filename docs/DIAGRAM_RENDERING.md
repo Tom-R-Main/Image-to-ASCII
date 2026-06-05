@@ -242,8 +242,43 @@ Deferred: composite states, choice/fork/join, and notes.
  '------'
 ```
 
+## Class Diagrams
+
+Class diagrams are also graph-layout, lowered to the shared graph IR
+(`src/diagram/mermaid/class.zig`). They add a **compartment-node renderer**: a
+class becomes a "card" — a header plus stacked compartments (attributes, methods)
+— instead of a simple box. The graph IR `Node` carries optional `compartments`,
+and `ir.cardHeight` is shared by the layout (to size the node) and the renderer
+(to place dividers) so the card exactly fills its rect. This card renderer is the
+reusable substrate for future ER, requirement, architecture, and C4 cards.
+
+```text
++---------------+
+|     User      |
++---------------+
+| +String id    |
++---------------+
+| +login() bool |
++---------------+
+        ^
+        +-----------+
+        v           |
+   +---------+  +-------+
+   | Session |  | Admin |
+   +---------+  +-------+
+```
+
+Relationships lower to edges with UML endpoint decorations
+(`ArrowKind.triangle`/`diamond`/`diamond_filled` plus `Edge.head_at_source`):
+inheritance `<|--`/`--|>`, composition `*--`/`--*`, aggregation `o--`/`--o`,
+association `-->`/`<--`/`--`, dependency `..>`/`<..`, realization `..|>`/`<|..`,
+each with an optional `: label`. The parent/whole is placed on top with its
+decoration at the source. Deferred: generics/annotations/namespaces,
+multiplicities, and spreading multiple same-side decorations across the parent's
+edge (today two source-decorated relationships share the exit port).
+
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart, sequence, or state backend, so
+routes to the flowchart, sequence, state, or class backend, so
 `cell-render mermaid file.mmd` handles any of them.
 
 ## Bounded Panes (Viewport)
@@ -274,12 +309,13 @@ size). With no bounds, output is natural (unchanged).
 
 ## Status and Next
 
-The `mermaid` CLI subcommand renders flowchart, sequence, and state diagrams
-(`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
+The `mermaid` CLI subcommand renders flowchart, sequence, state, and class
+diagrams (`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
 plus the viewport flags above); syntax errors print as `file:line:col: message`.
 Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
-labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks.
-Next: a class diagram (graph-layout, reusing a compartment-node renderer) and
+labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
+class diagrams render compartment cards with UML relationship ends. Next: reuse
+the compartment-node renderer for ER/requirement/architecture/C4 cards, and
 richer state features.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime

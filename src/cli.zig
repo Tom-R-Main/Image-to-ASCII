@@ -277,6 +277,7 @@ fn writeMermaidUsage(writer: *std.Io.Writer) !void {
         \\                    messages; self-messages; notes; activations;
         \\                    alt/opt/loop/par blocks.
         \\  stateDiagram[-v2] — states, [*] start/end, A --> B : label.
+        \\  classDiagram    — class cards with members; <|-- *-- o-- --> ..> .. .
         \\Comments use %%. Unsupported syntax is reported as file:line:col.
         \\
     );

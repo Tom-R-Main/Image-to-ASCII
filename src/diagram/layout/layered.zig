@@ -293,9 +293,14 @@ const Engine = struct {
 
     fn buildLNodes(self: *Engine) LayoutError!void {
         for (self.diagram.nodes, 0..) |node, i| {
-            const label_w = try text_measure.width(node.label);
-            const w = label_w + 2 + 2 * self.options.pad_x;
-            const h: u32 = 3;
+            var content_w = try text_measure.width(node.label);
+            if (node.compartments) |comps| {
+                for (comps) |c| {
+                    for (c) |line| content_w = @max(content_w, try text_measure.width(line));
+                }
+            }
+            const w = content_w + 2 + 2 * self.options.pad_x;
+            const h: u32 = ir.cardHeight(node);
             const sec: u32 = if (self.vertical) w else h;
             const pri: u32 = if (self.vertical) h else w;
             try self.lnodes.append(self.arena, .{

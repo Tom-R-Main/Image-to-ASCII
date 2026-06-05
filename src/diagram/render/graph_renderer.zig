@@ -10,6 +10,7 @@ const ir = @import("../ir/graph.zig");
 const layered = @import("../layout/layered.zig");
 const flowchart = @import("../mermaid/flowchart.zig");
 const state = @import("../mermaid/state.zig");
+const class = @import("../mermaid/class.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -49,10 +50,15 @@ pub fn renderGraph(
         try drawPolyline(&canvas, edge.points, line_opts);
     }
 
-    // 2. Node shapes and their labels.
+    // 2. Node shapes/cards and their labels.
+    const box_opts: cc.BoxOptions = .{ .glyph_set = options.glyph_set, .fg = options.node_fg, .bg = options.node_bg };
     for (lay.nodes) |node| {
-        try drawNodeShape(&canvas, node.rect, node.shape, options.glyph_set, node_text);
-        try drawCenteredLabel(&canvas, node.rect, node.label, node_text);
+        if (diagram.nodes[node.node].compartments) |comps| {
+            try drawCard(&canvas, node.rect, node.label, comps, box_opts, node_text, options.layout.pad_x);
+        } else {
+            try drawNodeShape(&canvas, node.rect, node.shape, options.glyph_set, node_text);
+            try drawCenteredLabel(&canvas, node.rect, node.label, node_text);
+        }
     }
 
     // 3. Endpoint decorations (drawn last so they stay visible at box edges).
@@ -63,7 +69,8 @@ pub fn renderGraph(
             .fg = options.edge_fg,
             .bg = options.edge_bg,
         };
-        try drawDecoration(&canvas, edge, options.glyph_set, arrow_opts, edge_text);
+        const at_source = diagram.edges[edge.edge_index].head_at_source;
+        try drawDecoration(&canvas, edge, at_source, options.glyph_set, arrow_opts, edge_text);
     }
 
     // 4. Edge labels, placed beside the routing line rather than over it.
@@ -96,6 +103,19 @@ pub fn renderMermaidState(
     diagnostic: *?state.MermaidError,
 ) (GraphRenderError || state.ParseError)!core.Frame {
     var parsed = try state.parseState(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a Mermaid class diagram and render it. Classes become compartment cards;
+/// it reuses the same graph layout and renderer.
+pub fn renderMermaidClass(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?class.MermaidError,
+) (GraphRenderError || class.ParseError)!core.Frame {
+    var parsed = try class.parseClass(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -262,35 +282,56 @@ fn pathMidpoint(points: []const layered.Point) Midpoint {
 fn drawDecoration(
     canvas: *cc.CellCanvas,
     edge: layered.RoutedEdge,
+    at_source: bool,
     glyph_set: cc.GlyphSet,
     arrow_opts: cc.ArrowOptions,
     text_opts: cc.TextOptions,
 ) !void {
     const points = edge.points;
     if (points.len < 2) return;
-    const last = points[points.len - 1];
 
-    // Walk back to the nearest distinct point to get the head direction.
-    var prev = last;
-    var i = points.len - 1;
-    while (i > 0) {
-        i -= 1;
-        if (points[i].x != last.x or points[i].y != last.y) {
-            prev = points[i];
-            break;
+    // The decorated endpoint and its inward neighbor (so direction points into
+    // the decorated node).
+    const p = if (at_source) points[0] else points[points.len - 1];
+    var prev = p;
+    if (at_source) {
+        for (points[1..]) |q| {
+            if (q.x != p.x or q.y != p.y) {
+                prev = q;
+                break;
+            }
+        }
+    } else {
+        var i = points.len - 1;
+        while (i > 0) {
+            i -= 1;
+            if (points[i].x != p.x or points[i].y != p.y) {
+                prev = points[i];
+                break;
+            }
         }
     }
+    const dx = p.x - prev.x;
+    const dy = p.y - prev.y;
 
     switch (edge.arrow) {
         .none => {},
-        .arrow => try canvas.drawArrow(
-            .{ .x = prev.x, .y = prev.y },
-            .{ .x = last.x, .y = last.y },
-            arrow_opts,
-        ),
-        .circle => try canvas.drawText(last.x, last.y, circleGlyph(glyph_set), text_opts),
-        .cross => try canvas.drawText(last.x, last.y, crossGlyph(glyph_set), text_opts),
+        .arrow => try canvas.drawArrow(.{ .x = prev.x, .y = prev.y }, .{ .x = p.x, .y = p.y }, arrow_opts),
+        .circle => try canvas.drawText(p.x, p.y, circleGlyph(glyph_set), text_opts),
+        .cross => try canvas.drawText(p.x, p.y, crossGlyph(glyph_set), text_opts),
+        .triangle => try canvas.drawText(p.x, p.y, triangleGlyph(glyph_set, dx, dy), text_opts),
+        .diamond => try canvas.drawText(p.x, p.y, if (glyph_set == .ascii) "o" else "\u{25C7}", text_opts), // ◇
+        .diamond_filled => try canvas.drawText(p.x, p.y, if (glyph_set == .ascii) "*" else "\u{25C6}", text_opts), // ◆
     }
+}
+
+fn triangleGlyph(glyph_set: cc.GlyphSet, dx: i32, dy: i32) []const u8 {
+    if (@abs(dy) >= @abs(dx)) {
+        if (dy < 0) return if (glyph_set == .ascii) "^" else "\u{25B3}"; // △
+        return if (glyph_set == .ascii) "v" else "\u{25BD}"; // ▽
+    }
+    if (dx < 0) return if (glyph_set == .ascii) "<" else "\u{25C1}"; // ◁
+    return if (glyph_set == .ascii) ">" else "\u{25B7}"; // ▷
 }
 
 fn circleGlyph(glyph_set: cc.GlyphSet) []const u8 {
@@ -305,6 +346,51 @@ fn crossGlyph(glyph_set: cc.GlyphSet) []const u8 {
         .unicode_box => "\u{00D7}", // MULTIPLICATION SIGN
         .ascii => "x",
     };
+}
+
+/// Draw a compartment "card": a rectangular box with a centered header and one
+/// or more dividers separating left-justified content rows. Row offsets mirror
+/// `ir.cardHeight` so the card exactly fills the layout-computed rect.
+fn drawCard(
+    canvas: *cc.CellCanvas,
+    rect: layered.Rect,
+    header: []const u8,
+    comps: []const ir.Compartment,
+    box_opts: cc.BoxOptions,
+    text_opts: cc.TextOptions,
+    pad_x: u32,
+) !void {
+    try canvas.drawBox(toCanvasRect(rect), box_opts);
+    try drawRowText(canvas, rect, rect.y + 1, header, .center, pad_x, text_opts);
+
+    const line_opts: cc.LineOptions = .{ .glyph_set = box_opts.glyph_set, .stroke = box_opts.stroke, .fg = box_opts.fg, .bg = box_opts.bg };
+    const right = rect.x + @as(i32, @intCast(rect.width)) - 1;
+    var row = rect.y + 2;
+    for (comps) |c| {
+        try canvas.drawLine(.{ .x = rect.x, .y = row }, .{ .x = right, .y = row }, line_opts);
+        row += 1;
+        for (c, 0..) |line, k| {
+            try drawRowText(canvas, rect, row + @as(i32, @intCast(k)), line, .left, pad_x, text_opts);
+        }
+        row += @intCast(@max(@as(usize, 1), c.len));
+    }
+}
+
+fn toCanvasRect(rect: layered.Rect) cc.Rect {
+    return .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height };
+}
+
+const RowAlign = enum { left, center };
+
+fn drawRowText(canvas: *cc.CellCanvas, rect: layered.Rect, row: i32, text: []const u8, alignment: RowAlign, pad_x: u32, opts: cc.TextOptions) !void {
+    if (rect.width < 3) return;
+    const interior: i32 = @intCast(rect.width - 2);
+    const w: i32 = @intCast(text_measure.width(text) catch return);
+    const x = switch (alignment) {
+        .left => rect.x + 1 + @as(i32, @intCast(pad_x)),
+        .center => rect.x + 1 + @max(@as(i32, 0), @divTrunc(interior - w, 2)),
+    };
+    try canvas.drawText(x, row, text, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +460,45 @@ test "renders a state diagram as a graph (golden)" {
     const got = try frameToText(testing.allocator, frame);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings(golden, got);
+}
+
+test "renders a class diagram as a compartment card (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/class/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/class/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+
+    var diag: ?class.MermaidError = null;
+    var frame = try renderMermaidClass(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "class card has two compartments and a unicode inheritance triangle" {
+    var diag: ?class.MermaidError = null;
+    var frame = try renderMermaidClass(testing.allocator,
+        \\classDiagram
+        \\    class User {
+        \\      +id
+        \\      +run()
+        \\    }
+        \\    User <|-- Admin
+    , .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    var dividers: usize = 0;
+    var triangle = false;
+    for (frame.codepoints) |c| {
+        if (c == 0x251C) dividers += 1; // ├ left divider junction
+        if (c == 0x25B3) triangle = true; // △ inheritance head
+    }
+    try testing.expect(dividers >= 2); // header/attrs and attrs/methods dividers
+    try testing.expect(triangle);
 }
 
 test "renders a horizontal two-node flowchart" {
