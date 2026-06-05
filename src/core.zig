@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const ansi = @import("ansi.zig");
 const color = @import("color.zig");
 const dither = @import("dither.zig");
 const luma = @import("luma.zig");
@@ -199,7 +200,7 @@ pub fn renderToWriter(
     var frame = try renderToCells(allocator, image, terminal, options);
     defer frame.deinit(allocator);
 
-    try writeFrameAnsi(writer, frame);
+    try ansi.writeFrame(writer, frame);
 }
 
 fn validateSupportedColor(color_mode: ColorMode) RenderError!void {
@@ -505,44 +506,6 @@ fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sa
 
 fn rgbFromBackground(background: Rgba8) Rgb8 {
     return .{ .r = background.r, .g = background.g, .b = background.b };
-}
-
-fn eqlRgb(a: Rgb8, b: Rgb8) bool {
-    return a.r == b.r and a.g == b.g and a.b == b.b;
-}
-
-fn writeFrameAnsi(writer: *std.Io.Writer, frame: Frame) !void {
-    var current_fg: ?Rgb8 = null;
-    var current_bg: ?Rgb8 = null;
-
-    var row: u32 = 0;
-    while (row < frame.rows) : (row += 1) {
-        var col: u32 = 0;
-        while (col < frame.columns) : (col += 1) {
-            const idx = @as(usize, row) * frame.columns + col;
-            if (frame.color != .none) {
-                const next_fg = frame.fg[idx];
-                const next_bg = frame.bg[idx];
-                if (current_fg == null or !eqlRgb(current_fg.?, next_fg)) {
-                    try writer.print("\x1b[38;2;{};{};{}m", .{ next_fg.r, next_fg.g, next_fg.b });
-                    current_fg = next_fg;
-                }
-                if (current_bg == null or !eqlRgb(current_bg.?, next_bg)) {
-                    try writer.print("\x1b[48;2;{};{};{}m", .{ next_bg.r, next_bg.g, next_bg.b });
-                    current_bg = next_bg;
-                }
-            }
-
-            try writer.printUnicodeCodepoint(frame.codepoints[idx]);
-        }
-
-        if (frame.color != .none) {
-            try writer.writeAll("\x1b[0m");
-            current_fg = null;
-            current_bg = null;
-        }
-        try writer.writeByte('\n');
-    }
 }
 
 test "validates image dimensions" {

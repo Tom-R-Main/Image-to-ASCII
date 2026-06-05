@@ -27,6 +27,7 @@ pub const validateOptions = core.validateOptions;
 pub const validateTerminal = core.validateTerminal;
 
 test {
+    _ = @import("ansi.zig");
     _ = @import("color.zig");
     _ = @import("core.zig");
     _ = @import("dither.zig");

@@ -24,6 +24,10 @@
   table is itself an O(image) pass — it only pays off when reused across renders
   (live resize), which is what the explicit `integral_luma` strategy is for. The
   harness gained `--strategy`.
+- Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
+  decimal into a stack buffer, one `writeAll` per color change) instead of
+  formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on
+  color-churn frames (~69us -> ~27us for a 98 KB frame).
 
 ### Added
 
