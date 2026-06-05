@@ -360,6 +360,55 @@ pub fn regionLumaSpans(
     return areaSampleSpans(image, terminal, x_span, y_span).luma;
 }
 
+pub fn regionLumaSpansDirect(
+    image: core.ImageView,
+    terminal: core.TerminalProfile,
+    table: ?*const IntegralLuma,
+    x_span: AxisSpan,
+    y_span: AxisSpan,
+) f32 {
+    if (table) |t| return t.regionLuma(x_span.lo, y_span.lo, x_span.hi, y_span.hi);
+
+    const bg_linear_luma = luma.luminanceLinear(
+        luma.srgbToLinear(terminal.background.r),
+        luma.srgbToLinear(terminal.background.g),
+        luma.srgbToLinear(terminal.background.b),
+    );
+    var linear_luma_sum: f32 = 0.0;
+    var weight_sum: f32 = 0.0;
+
+    var y = y_span.start;
+    while (y < y_span.end) : (y += 1) {
+        const y_weight = y_span.weight(y);
+        if (y_weight == 0.0) continue;
+
+        var x = x_span.start;
+        while (x < x_span.end) : (x += 1) {
+            const weight = x_span.weight(x) * y_weight;
+            if (weight == 0.0) continue;
+
+            const p = pixelAt(image, x, y);
+            var pixel_luma = luma.luminanceLinear(
+                luma.srgbToLinear(p.r),
+                luma.srgbToLinear(p.g),
+                luma.srgbToLinear(p.b),
+            );
+            if (p.a != 255) {
+                const alpha = @as(f32, @floatFromInt(p.a)) / 255.0;
+                pixel_luma = pixel_luma * alpha + bg_linear_luma * (1.0 - alpha);
+            }
+            linear_luma_sum += pixel_luma * weight;
+            weight_sum += weight;
+        }
+    }
+
+    if (weight_sum > 0.0) {
+        linear_luma_sum /= weight_sum;
+    }
+
+    return luma.perceptualGamma(linear_luma_sum);
+}
+
 pub fn cellRegion(mapping: Mapping, cell_x: u32, cell_y: u32, sx: u32, sy: u32, sub_x: u32, sub_y: u32) [4]f32 {
     const virtual_w = mapping.columns * sx;
     const virtual_h = mapping.rows * sy;
@@ -521,11 +570,13 @@ test "span sampler matches direct area sampler" {
                     const region = cellRegion(mapping, cell_x, cell_y, 4, 3, sub_x, sub_y);
                     const direct = areaSample(image, terminal, region[0], region[1], region[2], region[3]);
                     const planned = areaSampleSpans(image, terminal, plan.xSpan(cell_x, sub_x), plan.ySpan(cell_y, sub_y));
+                    const planned_luma = regionLumaSpansDirect(image, terminal, null, plan.xSpan(cell_x, sub_x), plan.ySpan(cell_y, sub_y));
 
                     try std.testing.expectApproxEqAbs(direct.linear.r, planned.linear.r, 0.0001);
                     try std.testing.expectApproxEqAbs(direct.linear.g, planned.linear.g, 0.0001);
                     try std.testing.expectApproxEqAbs(direct.linear.b, planned.linear.b, 0.0001);
                     try std.testing.expectApproxEqAbs(direct.luma, planned.luma, 0.0001);
+                    try std.testing.expectApproxEqAbs(planned.luma, planned_luma, 0.0001);
                 }
             }
         }

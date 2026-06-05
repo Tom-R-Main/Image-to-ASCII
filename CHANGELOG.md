@@ -89,6 +89,13 @@
   path, adds a default color-bars plus slash-golden smoke, writes finite
   PSNR/SSIM/edge-correlation JSON rows with sampler policy, and exits nonzero on
   slash-golden or threshold failures.
+- Optimized the `glyph_structure` span path by sampling its 8x16 luma grid with a
+  luma-only direct span sampler and avoiding a redundant atlas lookup for flat
+  fallback cells. The quality corpus remains unchanged to the recorded precision
+  and `bench/results/glyph-structure-optimized.json` shows current ReleaseFast
+  median wins against `bench/results/ansi-diff.json`: glyph-structure mono
+  -15.88%, glyph-structure truecolor -9.48%, workspace glyph-structure mono
+  repeat -14.45%, and workspace glyph-structure truecolor repeat -8.10%.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

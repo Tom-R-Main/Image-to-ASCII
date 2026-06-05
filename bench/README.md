@@ -10,6 +10,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.js
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/glyph-structure-optimized.json
 zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 ```
 
@@ -282,6 +283,38 @@ Current render-plus-diff vs workspace-only:
 case,workspace_case,workspace_ns,diff_ns,delta_pct,allocs_steady,bytes_steady,ansi_bytes
 workspace-render-plus-diff-repeat,workspace-density-truecolor-repeat,209312,221730,5.93,0,0,0
 prepared-workspace-render-plus-diff-repeat,prepared-workspace-density-integral-repeat,54598,60457,10.73,0,0,0
+```
+
+## Glyph-Structure Optimization
+
+`bench/results/glyph-structure-optimized.json` records the first post-corpus glyph-structure optimization slice. The
+implementation keeps renderer APIs unchanged and narrows the hot-path work by:
+
+- sampling the 8x16 glyph luma grid with a glyph-only direct-luma span path,
+- preserving the existing RGB span sampler for non-glyph modes,
+- returning flat fallback glyphs directly from the atlas instead of selecting a codepoint and searching again.
+
+Compare against the committed ANSI-diff artifact with:
+
+```sh
+jq -r -s '
+  (.[0].results | map({key:.case, value:.median_ns}) | from_entries) as $base |
+  .[1].results[] |
+  select(.case == "glyph-structure-none" or .case == "glyph-structure-truecolor" or .case == "workspace-glyph-structure-none-repeat" or .case == "workspace-glyph-structure-truecolor-repeat") |
+  . as $opt |
+  ($base[$opt.case]) as $b |
+  [$opt.case, $b, $opt.median_ns, (((($opt.median_ns - $b) * 10000 / $b) | round) / 100)] | @tsv
+' bench/results/ansi-diff.json bench/results/glyph-structure-optimized.json
+```
+
+Current local comparison:
+
+```text
+case,ansi_diff_median_ns,glyph_optimized_median_ns,delta_pct
+glyph-structure-none,5739167,4827708,-15.88
+glyph-structure-truecolor,10157250,9194166,-9.48
+workspace-glyph-structure-none-repeat,5626416,4813209,-14.45
+workspace-glyph-structure-truecolor-repeat,10101000,9282875,-8.10
 ```
 
 ## Quality Corpus

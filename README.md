@@ -196,6 +196,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/glyph-structure-optimized.json
 zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 ```
 

@@ -47,7 +47,7 @@ pub const Atlas = struct {
 
     /// Select the glyph whose coverage best matches `tone` in [0, 1], where 0 is
     /// the lightest (least ink) and 1 the darkest (most ink).
-    pub fn selectByTone(self: Atlas, tone: f32) u21 {
+    pub fn selectGlyphByTone(self: Atlas, tone: f32) Glyph {
         const target = std.math.clamp(tone, 0.0, 1.0) * self.max_coverage;
         const gs = self.glyphs;
 
@@ -59,14 +59,18 @@ pub const Atlas = struct {
             if (gs[mid].coverage < target) lo = mid + 1 else hi = mid;
         }
 
-        if (lo == 0) return gs[0].codepoint;
-        if (lo >= gs.len) return gs[gs.len - 1].codepoint;
+        if (lo == 0) return gs[0];
+        if (lo >= gs.len) return gs[gs.len - 1];
         const below = gs[lo - 1];
         const above = gs[lo];
         return if (target - below.coverage <= above.coverage - target)
-            below.codepoint
+            below
         else
-            above.codepoint;
+            above;
+    }
+
+    pub fn selectByTone(self: Atlas, tone: f32) u21 {
+        return self.selectGlyphByTone(tone).codepoint;
     }
 
     pub fn coverageOf(self: Atlas, codepoint: u21) ?f32 {

@@ -938,7 +938,7 @@ fn sampleGlyphStructureCell(
         var sx: u32 = 0;
         while (sx < glyph.cell_width) : (sx += 1) {
             const i = @as(usize, sy) * glyph.cell_width + sx;
-            const raw = sampleCellLuma(image, terminal, integral, mapping, plan, col, row, glyph.cell_width, glyph.cell_height, sx, sy);
+            const raw = sampleGlyphStructureLuma(image, terminal, integral, mapping, plan, col, row, sx, sy);
             const adjusted = luma.applyAdjustments(raw, options.contrast, options.brightness, options.invert);
             values[i] = adjusted;
             sum += adjusted;
@@ -951,6 +951,23 @@ fn sampleGlyphStructureCell(
         .binary_mask = if (features.max - features.min >= 0.75) packBinaryMask(&values, (features.min + features.max) / 2.0) else null,
         .features = features,
     };
+}
+
+fn sampleGlyphStructureLuma(
+    image: ImageView,
+    terminal: TerminalProfile,
+    integral: ?*const sample.IntegralLuma,
+    mapping: sample.Mapping,
+    plan: ?*const sample.SamplePlan,
+    col: u32,
+    row: u32,
+    sub_x: u32,
+    sub_y: u32,
+) f32 {
+    if (plan) |p| {
+        return sample.regionLumaSpansDirect(image, terminal, integral, p.xSpan(col, sub_x), p.ySpan(row, sub_y));
+    }
+    return sampleCellLuma(image, terminal, integral, mapping, null, col, row, glyph.cell_width, glyph.cell_height, sub_x, sub_y);
 }
 
 fn packBinaryMask(values: *const [glyph.cell_bits]f32, threshold: f32) u128 {
@@ -1057,7 +1074,7 @@ fn selectStructuredGlyph(
     quality: Quality,
 ) glyph.Glyph {
     if (features.max - features.min < 0.15) {
-        return atlas.glyphFor(atlas.selectByTone(features.coverage)).?;
+        return atlas.selectGlyphByTone(features.coverage);
     }
 
     var best = atlas.glyphs[0];
