@@ -48,6 +48,34 @@ The JSON artifact records:
 - ANSI bytes emitted,
 - Zig version, OS, and CPU architecture.
 
+## Diagram Benchmarks
+
+Diagram rendering will get a separate artifact once the Mermaid parser and layout layers exist:
+
+```text
+bench/results/diagram-baseline.json
+```
+
+Planned rows:
+
+- `flowchart-small-parse`
+- `flowchart-small-layout`
+- `flowchart-small-render`
+- `flowchart-medium-parse`
+- `flowchart-medium-layout`
+- `flowchart-medium-render`
+- `sequence-small-parse`
+- `sequence-small-layout`
+- `sequence-small-render`
+- `sequence-long-parse`
+- `sequence-long-layout`
+- `sequence-long-render`
+- `ansi-diff-diagram-small-change`
+
+Track input bytes, line count, node count, edge/message count, output columns/rows, parse/layout/render nanoseconds,
+ANSI bytes, allocations, and steady-state allocations with reusable workspace/canvas state. `CellCanvas` itself is now
+covered by unit tests, but it does not write a benchmark artifact until there is a parser/layout workload to measure.
+
 ## Current ReleaseFast Baseline
 
 Measured locally on 2026-06-05 with:

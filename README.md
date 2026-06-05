@@ -2,13 +2,14 @@
 
 Zig-first terminal visual rendering for images, diagrams, and TUI surfaces.
 
-Cell Render turns visual inputs into terminal-native cells: raw images, semantic diagrams, and future agent/TUI visualization primitives. The core library accepts caller-owned data and returns `Frame` output or ANSI through caller-supplied writers. Decoding, terminal probing, layout ownership, and app lifecycle stay outside core
+Cell Render turns visual inputs into terminal-native cells: raw images, semantic diagrams, and future agent/TUI visualization primitives. The core library accepts caller-owned data and returns `Frame` output or ANSI through caller-supplied writers. Decoding, terminal probing, layout ownership, and app lifecycle stay outside core.
 
 ```text
-raw RGBA -> aspect-correct sampler -> density / block / glyph renderer -> Frame / coalesced ANSI writer
+ImageView / Diagram IR -> cell renderer -> Frame -> ANSI / diff writer / TUI buffer
 ```
 
-The durable product is a small, embeddable renderer for TUI apps, with Siftable as the first integration target.
+The durable product is a small, embeddable terminal renderer for TUI apps and agentic planning surfaces, with Siftable as
+the first integration target.
 
 ## Demo — Do I look like I know what a JPEG is?
 
@@ -44,6 +45,7 @@ magick \( docs/_ref.png -gravity North -background '#1d1f21' -splice 0x28 \
 ## Design Commitments
 
 - raw RGBA `ImageView` input — the caller owns the pixels,
+- terminal diagram primitives use `CellCanvas` and export the same `Frame` output contract,
 - caller-controlled `TerminalProfile` (dimensions, cell aspect, color, symbols, background),
 - allocator-owned, structure-of-arrays `Frame` output (`codepoints` / `fg` / `bg`),
 - color accumulation in linear light, encoded back to sRGB at emission,
@@ -54,6 +56,7 @@ magick \( docs/_ref.png -gravity North -background '#1d1f21' -splice 0x28 \
 See [RESEARCH.md](RESEARCH.md) for the architecture rationale and [PLAN.md](PLAN.md) for the milestone plan.
 See [docs/TUI_INTEGRATION.md](docs/TUI_INTEGRATION.md) for live TUI embedding with `PreparedImage`,
 `RenderWorkspace`, `Frame`, and ANSI diffing.
+See [docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md) for the terminal diagram path and Mermaid subset roadmap.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for decoder/tool dependency attribution.
 
 ## Build
@@ -122,6 +125,28 @@ _ = stats.bytes_emitted;
 
 For a full live-render loop, resize behavior, and Siftable-style ownership split, see
 [docs/TUI_INTEGRATION.md](docs/TUI_INTEGRATION.md).
+
+### CellCanvas
+
+`CellCanvas` is the mutable terminal drawing substrate for boxes, orthogonal lines, arrows, and labels. It is separate
+from image sampling and exports to the same `Frame` type used by the image renderers, so the existing ANSI writer and
+ANSI diff writer work unchanged.
+
+```zig
+var canvas = try ascii.CellCanvas.init(allocator, 40, 12, .truecolor);
+defer canvas.deinit(allocator);
+
+try canvas.drawBox(.{ .x = 1, .y = 1, .width = 16, .height = 5 }, .{});
+try canvas.drawText(4, 3, "Plan", .{});
+try canvas.drawArrow(.{ .x = 18, .y = 3 }, .{ .x = 28, .y = 3 }, .{});
+
+var frame = try canvas.toFrame(allocator);
+defer frame.deinit(allocator);
+try ascii.renderFrameToWriter(writer, frame);
+```
+
+The canvas supports Unicode box drawing and ASCII fallback glyph sets. Mermaid support should build on top of this path:
+`Mermaid text -> parser -> Diagram IR -> layout -> CellCanvas -> Frame`, not `Mermaid -> SVG/PNG -> image renderer`.
 
 ### Render modes and support matrix
 
@@ -212,6 +237,7 @@ renderer will use for a given `Options` / `TerminalProfile`. Span sampling is va
 The package is a working library plus a thin CLI. Implemented:
 
 - public types, ownership model, and input validation,
+- `CellCanvas` terminal drawing primitives for future diagram renderers,
 - aspect-aware sampling (`contain` / `cover` / `stretch`; `cover` crops the source rather than distorting it),
 - density rendering with a configurable character ramp and ordered dithering (`ordered_2x2` / `ordered_4x4`),
 - truecolor half-block and quadrant rendering, monochrome Braille rendering,

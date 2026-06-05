@@ -1,4 +1,4 @@
-# Image-to-ASCII Implementation Plan
+# Cell Render Implementation Plan
 
 Date: 2026-06-05
 Target repo: `Tom-R-Main/Image-to-ASCII`
@@ -6,15 +6,22 @@ Local workspace: `/Users/thomasmain/projects/image-to-ascii`
 
 ## Goal
 
-Build a Zig-first terminal image rendering library and CLI whose core accepts raw pixels and returns terminal-native
-cells or streamed ANSI output. The first useful release should prove:
+Build a Zig-first terminal visual rendering library and CLI whose core returns terminal-native cells or streamed ANSI
+output for images, diagrams, and TUI surfaces. The first image release proved:
 
 ```text
 raw RGBA -> aspect-correct sampler -> density/half-block renderer -> Frame / coalesced ANSI writer
 ```
 
-The repo should not become a generic image upload converter. The durable product is a small embeddable renderer for TUI
-apps, with Siftable as the first important integration target.
+The next product layer is semantic diagram rendering:
+
+```text
+Mermaid text -> parser -> Diagram IR -> layout -> CellCanvas -> Frame -> ANSI / OpenTUI / Siftable buffer
+```
+
+The repo should not become a generic image upload converter, and Mermaid support should not become an SVG/PNG bridge
+into the image renderer. The durable product is a small embeddable terminal renderer for TUI apps and agentic planning
+surfaces, with Siftable as the first important integration target.
 
 ## Repository Assumptions
 
@@ -36,20 +43,68 @@ apps, with Siftable as the first important integration target.
 ## Architectural Commitments
 
 1. Use `ImageView` raw RGBA input as the public core input.
-2. Use `Frame` structure-of-arrays output:
+2. Use `CellCanvas` as the mutable drawing substrate for diagrams and terminal UI primitives.
+3. Use `Frame` structure-of-arrays output:
    - `codepoints: []u21`
    - `fg: []Rgb8`
    - `bg: []Rgb8`
-3. Treat color mode as a frame property instead of per-cell optionals.
-4. Expose `renderToCells(...) !Frame` for TUIs.
-5. Expose `renderToWriter(*std.Io.Writer, ...) !void` for CLI and logs.
-6. Model density, half-block, quadrant, sextant, octant, and Braille with `PartitionModel` tables where possible.
-7. Keep glyph rendering split into:
+4. Treat color mode as a frame property instead of per-cell optionals.
+5. Expose `renderToCells(...) !Frame` for TUIs.
+6. Expose `renderToWriter(*std.Io.Writer, ...) !void` for CLI and logs.
+7. Model density, half-block, quadrant, sextant, octant, and Braille with `PartitionModel` tables where possible.
+8. Keep glyph rendering split into:
    - `glyph_tone`: calibrated density path,
    - `glyph_structure`: alignment-tolerant shape path.
-8. Do color accumulation in linear light and encode back to sRGB for terminal output.
-9. Coalesce ANSI SGR runs in the writer path.
-10. Keep decoding and font rasterization in CLI, adapters, or `tools/`, not core.
+9. Do color accumulation in linear light and encode back to sRGB for terminal output.
+10. Coalesce ANSI SGR runs in the writer path.
+11. Keep decoding and font rasterization in CLI, adapters, or `tools/`, not core.
+12. Keep Mermaid as one frontend over Diagram IR, layout, and `CellCanvas`; do not make it own the renderer.
+
+## Diagram Rendering Track
+
+### Slice 1: CellCanvas
+
+Status: implemented.
+
+- reusable `CellCanvas` allocation/reuse,
+- `drawText`,
+- `drawBox`,
+- `drawLine`,
+- `drawPolyline`,
+- `drawArrow`,
+- Unicode and ASCII glyph sets,
+- line intersection/join resolver,
+- conversion to `Frame`,
+- golden-style unit tests for boxes, arrows, intersections, and labels.
+
+### Slice 2: Minimal Mermaid Flowchart Parser
+
+Support only the practical first subset:
+
+- `graph` / `flowchart`,
+- directions `TD`, `TB`, `LR`, `RL`, `BT`,
+- node IDs and labels such as `A[Label]`,
+- basic edge operators `-->`, `---`, `-.->`, `==>`,
+- edge labels such as `A -->|label| B`,
+- comments beginning with `%%`.
+
+Reject unsupported syntax with precise line/column diagnostics in strict mode.
+
+### Slice 3: Layered Flowchart Renderer
+
+- normalize direction to an internal top-down layout,
+- assign ranks using longest-path ranking,
+- mark cycles,
+- order nodes inside ranks,
+- assign integer terminal coordinates,
+- route edges with Manhattan paths,
+- place edge labels near path midpoints,
+- render to `CellCanvas`.
+
+### Slice 4: Sequence Diagram Subset
+
+Sequence diagrams use lane/time layout, not graph layout. Start with participants, aliases, solid/dotted/async arrows,
+messages, and self-messages.
 
 ## Milestone 0: Repo Bootstrap
 
@@ -745,18 +800,23 @@ Must include:
 
 - License: Apache-2.0 vs MIT vs 0BSD.
 - Package name: `ascii-render`, `image-to-ascii`, or another Zig module name.
+- Public product name: currently documented as Cell Render while the Zig module
+  and CLI remain `image_to_ascii` / `image-to-ascii` for compatibility.
 - Whether `RenderMode.braille` should be separate from `PartitionKind.octant_2x4` long term.
 - Whether ANSI 16/256 support belongs in `v0.1.0` or after truecolor is stable.
 - Which optional decoder adapter to use first. Answer: `zigimg`, with `zstbi` as fallback if JPEG coverage becomes the
   limiting factor.
 - Which font rasterizer to use in `tools/` for calibration and quality metrics.
+- Which Mermaid subset should be the first compatibility target after the
+  flowchart v0 path is stable.
 
 ## Immediate Next Actions
 
-1. Add real-image quality classification so screenshot/photo-like inputs prefer
-   block modes and glyph-structure is reserved for cases where the corpus proves
-   it helps.
-2. Continue glyph-structure scoring work only after profiling identifies
+1. Add a minimal Mermaid flowchart lexer/parser that normalizes to a graph IR
+   and rejects unsupported syntax clearly.
+2. Add a layered graph layout and render the first flowchart subset through
+   `CellCanvas`.
+3. Add diagram golden fixtures and `bench/results/diagram-baseline.json` once
+   parse/layout/render stages exist.
+4. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.
-3. Expand the corpus only when a new renderer mode or real-image adapter exposes
-   uncovered failure cases.

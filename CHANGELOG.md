@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Library
+
+- Broadened the project scope from image-only ASCII conversion toward Cell
+  Render: a terminal visual rendering library for images, diagrams, and TUI
+  surfaces. Added `CellCanvas` as the shared terminal drawing substrate for
+  boxes, orthogonal lines, polylines, arrows, labels, Unicode box drawing, ASCII
+  fallback, and N/E/S/W line-join resolution. `CellCanvas` exports to the
+  existing `Frame` contract, so the ANSI writer and ANSI diff writer work
+  unchanged. Mermaid remains a future frontend over `Diagram IR -> layout ->
+  CellCanvas`, not an SVG/PNG/image-renderer path.
+
 ### CLI and Tooling
 
 - Added `docs/TUI_INTEGRATION.md` with the intended live TUI embedding model:
