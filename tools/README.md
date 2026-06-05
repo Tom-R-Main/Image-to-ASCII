@@ -33,18 +33,31 @@ Files:
 - `reconstruct.zig` — `Frame` → image using known block/Braille masks.
 - `render_compare.zig` — CLI orchestrator.
 
-## Font calibration (`calibrate_font`) — scaffold
+## Font calibration (`calibrate_font`)
 
-Defines the `GlyphAtlas` format and the generation pipeline for the glyph render
-modes. The rasterization step is stubbed: it requires a permissive font
-rasterizer (FreeType or stb_truetype) wired in here as a tools-only dependency.
+Generates a per-font `GlyphAtlas` for the glyph render modes. Rasterization is
+provided by **stb_truetype** (public domain, vendored under `tools/stb/`), linked
+only into this tool — never into the core.
+
+For each codepoint it rasterizes the glyph into a cell-sized coverage bitmap and
+computes coverage, ink centroid/spread, a quantized dominant edge orientation,
+and a packed 1-bit mask; glyphs are then bucketed by coverage.
 
 ```sh
-zig build calibrate
+zig build calibrate -- --font /System/Library/Fonts/Monaco.ttf \
+    --cell 8x16 --out src/generated_atlas.zig
 ```
+
+Options: `--font path.ttf`, `--cell WxH`, `--out path.zig` (emits a self-contained
+Zig atlas literal that `src/glyph.zig` can `@import` once the glyph render modes
+land). `.ttc` collections use face 0.
+
+The vendored `stb/stb_truetype.h` is upstream v1.26, unmodified; `stb_truetype_impl.c`
+is the one-line implementation translation unit.
 
 ## Planned
 
-- font rasterizer integration + real atlas generation,
+- `src/glyph.zig`: glyph-tone renderer consuming the generated atlas,
+- structural prefilter + alignment-tolerant scorer for `glyph_structure`,
 - a small line-art / UI / photo / logo quality corpus,
 - optional decoder experiments.

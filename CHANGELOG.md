@@ -11,8 +11,11 @@
 - Quality-harness scaffold under `tools/`: `zig build compare` renders an image,
   reconstructs it from the emitted cells (block/Braille masks; density halftone
   approximation), and scores PSNR/SSIM/edge-correlation with no font rasterizer.
-- `tools/calibrate_font.zig` scaffold defining the `GlyphAtlas` format and a
-  stubbed rasterization step for the upcoming glyph modes.
+- `tools/calibrate_font.zig` now rasterizes real glyphs via stb_truetype
+  (public domain, vendored under `tools/stb/`, linked only into the tool). It
+  computes per-glyph coverage, ink centroid/spread, a quantized dominant edge
+  orientation, and a packed 1-bit mask, buckets glyphs by coverage, and can emit
+  a self-contained Zig atlas literal (`--out`) for the upcoming glyph modes.
 
 ### Fixed
 

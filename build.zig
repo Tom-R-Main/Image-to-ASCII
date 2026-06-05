@@ -58,16 +58,20 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const calibrate_mod = b.createModule(.{
+        .root_source_file = b.path("tools/calibrate_font.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    calibrate_mod.addIncludePath(b.path("tools/stb"));
+    calibrate_mod.addCSourceFile(.{
+        .file = b.path("tools/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
     const calibrate_exe = b.addExecutable(.{
         .name = "image-to-ascii-calibrate",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/calibrate_font.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "image_to_ascii", .module = mod },
-            },
-        }),
+        .root_module = calibrate_mod,
     });
 
     const run_step = b.step("run", "Run the CLI");
