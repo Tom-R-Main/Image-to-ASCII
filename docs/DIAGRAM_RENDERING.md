@@ -214,9 +214,37 @@ content and the title; nested frames are enclosed by their parents, and
 `else`/`and` render as dotted dividers. Deferred: `critical`/`break`/`rect`
 blocks and a repeated participant row at the bottom.
 
+## State Diagrams
+
+State diagrams are graph-layout diagrams, so the frontend
+(`src/diagram/mermaid/state.zig`) lowers `stateDiagram`/`stateDiagram-v2` straight
+to the shared graph IR and reuses the layered layout and graph renderer — there is
+no separate state layout or renderer. States render as rounded nodes and `[*]` as
+a circle; start and end pseudo-states are kept distinct so `[*] → … → [*]` is a
+clean DAG rather than a cycle. Supported: transitions (`A --> B`, `A --> B :
+label`), state descriptions (`S : text`), `direction`, and `%%` comments.
+Deferred: composite states, choice/fork/join, and notes.
+
+```text
+   .---.
+   ( * )
+   '---'
+     |
+     v
+.--------.
+| Active |
+'--------'
+     |
+  finish
+     v
+ .------.
+ | Done |
+ '------'
+```
+
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart or sequence backend, so `image-to-ascii mermaid file.mmd`
-handles either.
+routes to the flowchart, sequence, or state backend, so
+`image-to-ascii mermaid file.mmd` handles any of them.
 
 ## Status and Next
 

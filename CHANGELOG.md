@@ -80,6 +80,17 @@
   `block_else`/`block_end` events, `LaidBlock`, and `Divider`. v0 limitations
   remaining: header boxes are top-only, and `critical`/`break`/`rect` blocks are
   not parsed.
+- Added a **state-diagram** frontend (`stateDiagram`/`stateDiagram-v2`). Because
+  state diagrams are a graph-layout diagram, the parser
+  (`src/diagram/mermaid/state.zig`) lowers directly to the existing graph IR and
+  reuses the layered layout and graph renderer — no new layout or renderer.
+  Supports states (rounded nodes), `[*]` start/end pseudo-states (rendered as
+  circles; start and end are kept distinct so `[*] → … → [*]` stays a DAG rather
+  than a cycle), transitions `A --> B` with optional `: label`, state
+  descriptions (`S : text`), `direction`, and `%% comments`. The `renderMermaid`
+  dispatcher now detects `stateDiagram`/`stateDiagram-v2` too. New public API:
+  `parseState`, `renderMermaidState`. Golden fixture in `testdata/mermaid/state/`.
+  Deferred: composite states, choice/fork/join, and notes.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

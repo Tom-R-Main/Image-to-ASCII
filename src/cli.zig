@@ -195,7 +195,9 @@ fn writeMermaidUsage(writer: *std.Io.Writer) !void {
         \\  flowchart/graph — TD/TB/LR/RL/BT; rect/round/circle/diamond nodes;
         \\                    --> --- -.-> ==> --o --x edges; pipe labels.
         \\  sequenceDiagram — participants/actors with aliases; ->> -->> -) -x
-        \\                    (and -> --> --) --x) messages; self-messages.
+        \\                    messages; self-messages; notes; activations;
+        \\                    alt/opt/loop/par blocks.
+        \\  stateDiagram[-v2] — states, [*] start/end, A --> B : label.
         \\Comments use %%. Unsupported syntax is reported as file:line:col.
         \\
     );

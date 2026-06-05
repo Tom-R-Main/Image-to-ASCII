@@ -9,6 +9,7 @@ const text_measure = @import("../../canvas/text_measure.zig");
 const ir = @import("../ir/graph.zig");
 const layered = @import("../layout/layered.zig");
 const flowchart = @import("../mermaid/flowchart.zig");
+const state = @import("../mermaid/state.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -82,6 +83,19 @@ pub fn renderMermaidFlowchart(
     diagnostic: *?flowchart.MermaidError,
 ) (GraphRenderError || flowchart.ParseError)!core.Frame {
     var parsed = try flowchart.parseFlowchart(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a Mermaid state diagram and render it. State diagrams lower to the same
+/// graph IR, so this reuses the flowchart layout and renderer.
+pub fn renderMermaidState(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?state.MermaidError,
+) (GraphRenderError || state.ParseError)!core.Frame {
+    var parsed = try state.parseState(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -325,6 +339,41 @@ fn renderToText(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         try out.append(allocator, '\n');
     }
     return out.toOwnedSlice(allocator);
+}
+
+fn frameToText(allocator: std.mem.Allocator, frame: core.Frame) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(allocator);
+    var row: u32 = 0;
+    while (row < frame.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < frame.columns) : (col += 1) {
+            const cp = frame.codepoints[row * frame.columns + col];
+            var buf: [4]u8 = undefined;
+            const len = std.unicode.utf8Encode(cp, &buf) catch 1;
+            try out.appendSlice(allocator, buf[0..len]);
+        }
+        try out.append(allocator, '\n');
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+test "renders a state diagram as a graph (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/state/simple.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/state/simple.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+
+    var diag: ?state.MermaidError = null;
+    var frame = try renderMermaidState(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
 }
 
 test "renders a horizontal two-node flowchart" {

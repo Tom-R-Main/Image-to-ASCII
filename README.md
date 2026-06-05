@@ -366,8 +366,8 @@ core module still exposes raw `ImageView`/`Rgba8` input and does not export deco
 
 ### `mermaid` subcommand
 
-Render a Mermaid `.mmd` file straight to the terminal. The diagram type (flowchart or sequence) is auto-detected from the
-header:
+Render a Mermaid `.mmd` file straight to the terminal. The diagram type (flowchart, sequence, or state) is auto-detected
+from the header:
 
 ```sh
 # Flowchart, box-drawing output (truecolor by default):
@@ -389,6 +389,10 @@ A sequence diagram renders as ordered lanes with dotted lifelines and stacked me
     :  Response   :
     <.............+
 ```
+
+Sequence diagrams support participants/actors, all message arrows, self-messages, notes, activations, and
+alt/opt/loop/par blocks. State diagrams (`stateDiagram-v2`) support states, `[*]` start/end, and labeled transitions, and
+reuse the flowchart graph layout.
 
 Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`. Syntax errors are reported to stderr as
 `file:line:col: message` and exit non-zero — the actionable feedback an agent needs to fix generated diagrams. The

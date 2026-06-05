@@ -868,8 +868,10 @@ Must include:
    strokes their own glyphs; place edge labels beside the routing line.~~ ✅
 5. ~~Begin the sequence-diagram track (lane/time layout), reusing `CellCanvas`.~~ ✅
 6. ~~Extend the sequence subset (notes, activations, alt/loop/opt).~~ ✅
-7. Add the next Tier-1 diagram (state or class), reusing the graph layout engine.
-8. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+7. ~~Add the next Tier-1 diagram (state), reusing the graph layout engine.~~ ✅
+8. Add the class/ER diagram (also graph-layout) and richer state features
+   (composite states, choice/fork/join).
+9. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
    becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

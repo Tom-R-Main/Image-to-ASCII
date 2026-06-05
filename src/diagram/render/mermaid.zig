@@ -9,7 +9,7 @@ const errors = @import("../mermaid/errors.zig");
 const graph_renderer = @import("graph_renderer.zig");
 const sequence_renderer = @import("sequence_renderer.zig");
 
-pub const DiagramKind = enum { flowchart, sequence };
+pub const DiagramKind = enum { flowchart, sequence, state };
 
 pub const MermaidRenderOptions = struct {
     glyph_set: cc.GlyphSet = .unicode_box,
@@ -32,6 +32,7 @@ pub fn detectKind(source: []const u8) ?DiagramKind {
         const word = firstWord(trimmed);
         if (std.mem.eql(u8, word, "sequenceDiagram")) return .sequence;
         if (std.mem.eql(u8, word, "flowchart") or std.mem.eql(u8, word, "graph")) return .flowchart;
+        if (std.mem.eql(u8, word, "stateDiagram") or std.mem.eql(u8, word, "stateDiagram-v2")) return .state;
         return null;
     }
     return null;
@@ -51,7 +52,7 @@ pub fn renderMermaid(
             .kind = .missing_header,
             .line = 1,
             .column = 1,
-            .message = "expected a 'flowchart', 'graph', or 'sequenceDiagram' header",
+            .message = "expected a 'flowchart', 'graph', 'sequenceDiagram', or 'stateDiagram' header",
         };
         return error.MermaidSyntax;
     };
@@ -62,6 +63,10 @@ pub fn renderMermaid(
             .color = options.color,
         }, diagnostic),
         .sequence => sequence_renderer.renderMermaidSequence(gpa, source, .{
+            .glyph_set = options.glyph_set,
+            .color = options.color,
+        }, diagnostic),
+        .state => graph_renderer.renderMermaidState(gpa, source, .{
             .glyph_set = options.glyph_set,
             .color = options.color,
         }, diagnostic),
@@ -85,6 +90,8 @@ test "detects diagram kinds from the header" {
     try testing.expectEqual(DiagramKind.flowchart, detectKind("graph TD\n A --> B\n").?);
     try testing.expectEqual(DiagramKind.sequence, detectKind("sequenceDiagram\n A->>B: hi\n").?);
     try testing.expectEqual(DiagramKind.sequence, detectKind("%% note\n\nsequenceDiagram\n").?);
+    try testing.expectEqual(DiagramKind.state, detectKind("stateDiagram-v2\n [*] --> A\n").?);
+    try testing.expectEqual(DiagramKind.state, detectKind("stateDiagram\n A --> B\n").?);
     try testing.expect(detectKind("nonsense\n") == null);
     try testing.expect(detectKind("\n\n") == null);
 }
@@ -99,6 +106,13 @@ test "renderMermaid dispatches to the flowchart backend" {
 test "renderMermaid dispatches to the sequence backend" {
     var diag: ?errors.MermaidError = null;
     var frame = try renderMermaid(testing.allocator, "sequenceDiagram\n A->>B: hi\n", .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    try testing.expect(frame.columns > 0 and frame.rows > 0);
+}
+
+test "renderMermaid dispatches to the state backend" {
+    var diag: ?errors.MermaidError = null;
+    var frame = try renderMermaid(testing.allocator, "stateDiagram-v2\n [*] --> A\n A --> [*]\n", .{ .color = .none }, &diag);
     defer frame.deinit(testing.allocator);
     try testing.expect(frame.columns > 0 and frame.rows > 0);
 }
