@@ -54,6 +54,8 @@ magick \( docs/_ref.png -gravity North -background '#1d1f21' -splice 0x28 \
   `tools/`.
 
 See [RESEARCH.md](RESEARCH.md) for the architecture rationale and [PLAN.md](PLAN.md) for the milestone plan.
+See [docs/TUI_INTEGRATION.md](docs/TUI_INTEGRATION.md) for live TUI embedding with `PreparedImage`,
+`RenderWorkspace`, `Frame`, and ANSI diffing.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for decoder/tool dependency attribution.
 
 ## Build
@@ -119,6 +121,9 @@ const stats = try ascii.renderFrameDiffToWriter(
 );
 _ = stats.bytes_emitted;
 ```
+
+For a full live-render loop, resize behavior, and Siftable-style ownership split, see
+[docs/TUI_INTEGRATION.md](docs/TUI_INTEGRATION.md).
 
 ### Render modes and support matrix
 

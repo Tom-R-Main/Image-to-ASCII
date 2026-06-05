@@ -4,6 +4,12 @@
 
 ### CLI and Tooling
 
+- Added `docs/TUI_INTEGRATION.md` with the intended live TUI embedding model:
+  decoded pixels stay app-owned, `PreparedImage` owns source-derived analysis,
+  `RenderWorkspace` owns output/render-shape scratch, `Frame` represents a
+  rendered cell state, and `renderFrameDiffToWriter` emits dirty ANSI updates.
+  The guide includes Siftable-oriented boundaries, resize rules, and mode
+  recommendations for screenshots, previews, monochrome output, and line art.
 - Added a CLI/tool-layer real image adapter using `zigimg` for PNG and JPEG
   input. The adapter converts decoded pixels into owned `[]Rgba8` and exposes
   only `ImageView` to the renderer, so `src/root.zig` and the core API remain

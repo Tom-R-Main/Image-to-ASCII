@@ -691,7 +691,9 @@ Must include:
 - ANSI frame-diff writer with dirty-run benchmarks,
 - checked-in quality corpus with slash golden and finite-metric regression gates,
 - first glyph-structure hot-path optimization measured against the quality corpus
-  and ANSI-diff benchmark artifact.
+  and ANSI-diff benchmark artifact,
+- integration notes for Siftable or another TUI consumer, including
+  `PreparedImage`, `RenderWorkspace`, `Frame`, and ANSI diff ownership.
 
 ### `v0.3.0`: Glyph-Tone
 
@@ -720,7 +722,7 @@ Must include:
 - benchmark baselines,
 - real-image CLI adapter,
 - permissive licensing confirmed,
-- integration notes for Siftable or another TUI consumer.
+- practical integration examples for Siftable or another TUI consumer.
 
 ## Risk Register
 
@@ -747,6 +749,10 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Add TUI adapter integration notes for `RenderWorkspace` plus frame diffs.
-2. Continue glyph-structure scoring work only after the next profiling run identifies candidate scoring, not sampling, as the bottleneck.
-3. Expand the corpus only when a new renderer mode or real-image adapter exposes uncovered failure cases.
+1. Add real-image quality classification so screenshot/photo-like inputs prefer
+   block modes and glyph-structure is reserved for cases where the corpus proves
+   it helps.
+2. Continue glyph-structure scoring work only after profiling identifies
+   candidate scoring, not sampling, as the bottleneck.
+3. Expand the corpus only when a new renderer mode or real-image adapter exposes
+   uncovered failure cases.
