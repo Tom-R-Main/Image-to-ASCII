@@ -25,6 +25,7 @@ const BenchResult = struct {
     color: ascii.ColorMode,
     dither: ascii.DitherMode,
     sample_strategy: ascii.SampleStrategy,
+    sampler_policy: ascii.SamplerPolicy,
     input_width: u32,
     input_height: u32,
     output_columns: u32,
@@ -51,6 +52,7 @@ const cases = [_]BenchCase{
     .{ .name = "glyph-tone-truecolor", .mode = .glyph_tone, .partition = .density_1x1, .color = .truecolor },
     .{ .name = "glyph-structure-none", .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .none },
     .{ .name = "glyph-structure-truecolor", .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .truecolor },
+    .{ .name = "density-integral-none", .mode = .density, .partition = .density_1x1, .color = .none, .sample_strategy = .integral_luma },
     .{ .name = "prepared-density-integral-none", .kind = .render_prepared, .mode = .density, .partition = .density_1x1, .color = .none, .sample_strategy = .integral_luma },
     .{ .name = "render-writer-half-truecolor", .kind = .render_writer, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor },
     .{ .name = "ansi-encode-only", .kind = .ansi_encode_only, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor },
@@ -90,7 +92,7 @@ pub fn main(init: std.process.Init) !void {
 
     var results: [cases.len]BenchResult = undefined;
 
-    try stdout.writeAll("case,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,ansi_bytes\n");
+    try stdout.writeAll("case,policy,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,ansi_bytes\n");
     for (cases, 0..) |bench_case, idx| {
         const image = switch (bench_case.synthetic) {
             .gradient => gradient,
@@ -151,6 +153,8 @@ fn runCase(
     if (bench_case.kind == .render_prepared) {
         prepared = try ascii.prepareImage(allocator, image, terminal, .{ .sample_strategy = bench_case.sample_strategy });
     }
+    const prepared_integral = if (prepared) |p| p.luma_sat != null else false;
+    const sampler_policy = ascii.resolveSamplerPolicy(options, terminal, prepared_integral);
 
     var pre_frame: ?ascii.Frame = null;
     defer if (pre_frame) |*frame| frame.deinit(allocator);
@@ -185,6 +189,7 @@ fn runCase(
         .color = bench_case.color,
         .dither = bench_case.dither,
         .sample_strategy = bench_case.sample_strategy,
+        .sampler_policy = sampler_policy,
         .input_width = in_w,
         .input_height = in_h,
         .output_columns = out_w,
@@ -261,6 +266,15 @@ fn allocatedBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
 }
 
 fn samplePlanBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
+    const terminal = ascii.TerminalProfile{ .columns = columns, .rows = rows, .color = bench_case.color };
+    const options = ascii.Options{
+        .mode = bench_case.mode,
+        .partition = bench_case.partition,
+        .sample_strategy = bench_case.sample_strategy,
+    };
+    const prepared_integral = bench_case.kind == .render_prepared and bench_case.sample_strategy == .integral_luma and bench_case.color == .none;
+    if (ascii.resolveSamplerPolicy(options, terminal, prepared_integral) != .span_precompute) return 0;
+
     const subcells = subcellShape(bench_case);
     const spans = @as(u64, columns) * subcells.x + @as(u64, rows) * subcells.y;
     return spans * @sizeOf(ascii.AxisSpan);
@@ -294,8 +308,9 @@ fn insertionSortU64(values: []u64) void {
 }
 
 fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
-    try writer.print("{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+    try writer.print("{s},{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
         result.name,
+        @tagName(result.sampler_policy),
         result.input_width,
         result.input_height,
         result.output_columns,
@@ -332,7 +347,7 @@ fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResu
         \\    "cpu_arch": "{s}"
         \\  }},
         \\  "benchmark": {{
-        \\    "sampler": "span_precompute",
+        \\    "sampler": "span_tuned",
         \\    "input_width": {d},
         \\    "input_height": {d},
         \\    "output_columns": {d},
@@ -375,6 +390,7 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         \\      "partition": "{s}",
         \\      "color_mode": "{s}",
         \\      "sample_strategy": "{s}",
+        \\      "sampler_policy": "{s}",
         \\      "dither": "{s}",
         \\      "synthetic": "{s}",
         \\      "input_width": {d},
@@ -397,6 +413,7 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         @tagName(result.partition),
         @tagName(result.color),
         @tagName(result.sample_strategy),
+        @tagName(result.sampler_policy),
         @tagName(result.dither),
         @tagName(result.synthetic),
         result.input_width,

@@ -7,6 +7,7 @@ also write a stable machine-readable JSON artifact:
 zig build bench
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 ```
 
 `bench/results/baseline.json` is intentionally tracked as the current local baseline. Generated or large benchmark corpora
@@ -22,6 +23,7 @@ The current synthetic matrix separates render kernels, prepared reuse, ANSI enco
 - Braille mono and truecolor,
 - glyph-tone mono and truecolor,
 - glyph-structure mono and truecolor,
+- density integral-luma without prepared reuse,
 - prepared density with reused `integral_luma`,
 - full render-to-writer half-block truecolor,
 - ANSI encode only,
@@ -29,7 +31,7 @@ The current synthetic matrix separates render kernels, prepared reuse, ANSI enco
 
 The JSON artifact records:
 
-- mode, partition, color mode, sample strategy, dither mode, and synthetic input,
+- mode, partition, color mode, sample strategy, resolved sampler policy, dither mode, and synthetic input,
 - input size and output cell grid,
 - iterations, mean ns/iteration, median, p95, ns/cell, and cells/sec,
 - estimated per-render allocation bytes (frame buffers plus render-shape span plans),
@@ -108,3 +110,50 @@ quality-compare-only,2435,2343,-3.78,0,0
 
 The parity tests compare span sampling to the reference direct sampler with an absolute epsilon of `0.0001` for linear RGB
 and luma.
+
+## Tuned Auto Policy
+
+`bench/results/span-tuned.json` records the tuned policy after the forced-span pass exposed regressions. The decision rule
+is:
+
+- `direct_box` stays the explicit reference path.
+- `integral_luma` and `prepared_integral_luma` do not build span arrays.
+- `auto` uses `span_precompute` for density, glyph-tone, glyph-structure, quadrant mono, and Braille truecolor.
+- `auto` uses `direct_box` for half-block, quadrant truecolor, and Braille mono.
+
+Compare tuned results against both earlier artifacts with:
+
+```sh
+jq -r -s '
+  (.[0].results | map({key:.case, value:.ns_per_iter}) | from_entries) as $base |
+  .[2].results[] | . as $tuned |
+  ($base[$tuned.case] // null) as $b |
+  select($b != null) |
+  [$tuned.case, $tuned.sampler_policy, $b, $tuned.ns_per_iter, (((($tuned.ns_per_iter - $b) * 10000 / $b) | round) / 100)] | @tsv
+' bench/results/baseline.json bench/results/span-precompute.json bench/results/span-tuned.json
+```
+
+Current tuned vs baseline:
+
+```text
+case,policy,baseline_ns,tuned_ns,delta_pct
+density-none,span_precompute,297263,288062,-3.10
+density-truecolor,span_precompute,292342,227821,-22.07
+half-truecolor,direct_box,339124,336331,-0.82
+quadrant-none,span_precompute,370101,317875,-14.11
+quadrant-truecolor,direct_box,604216,617919,2.27
+braille-none-dither,direct_box,671559,657593,-2.08
+braille-truecolor,span_precompute,862399,760757,-11.79
+glyph-tone-none,span_precompute,293198,269319,-8.14
+glyph-tone-truecolor,span_precompute,331192,287611,-13.16
+glyph-structure-none,span_precompute,6501429,5457337,-16.06
+glyph-structure-truecolor,span_precompute,11767835,9922710,-15.68
+prepared-density-integral-none,prepared_integral_luma,53911,58213,7.98
+render-writer-half-truecolor,direct_box,383749,366602,-4.47
+ansi-encode-only,direct_box,33144,30555,-7.81
+quality-compare-only,span_precompute,2435,2690,10.47
+```
+
+Prepared integral-luma now has the same estimated allocation as the original baseline (`9600` bytes) instead of paying for
+span arrays, and it improves by `17.56%` versus the forced-span artifact; the remaining delta against the older baseline
+is benchmark variance and the current helper structure rather than forced span construction.

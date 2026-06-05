@@ -19,6 +19,13 @@ pub const SampleStrategy = enum {
     integral_luma,
 };
 
+pub const SamplerPolicy = enum {
+    direct_box,
+    span_precompute,
+    integral_luma,
+    prepared_integral_luma,
+};
+
 /// Building the integral table is an O(image) pass, so for a single one-shot
 /// render it is at best a wash; only reuse across multiple renders (live resize)
 /// amortizes it. `auto` therefore stays on the direct sampler until a reuse path

@@ -680,6 +680,7 @@ Must include:
 - ANSI encode-only measurement,
 - prepared-image / render-context seam for reusable luma precomputation,
 - source sampling span precomputation benchmarked against the baseline artifact,
+- tuned auto sampler policy with per-row policy visibility in benchmark output,
 - quality ratchet hooks before more glyph tuning.
 
 ### `v0.3.0`: Glyph-Tone
@@ -735,7 +736,7 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Investigate span regressions in half-block truecolor, quadrant truecolor, Braille mono, and prepared integral-luma before wider specialization.
+1. Decide whether density mono should remain span-enabled despite noisy means or move to a direct-box auto policy.
 2. Add a render-into/frame-reuse API once the sampler hot loop is measured.
 3. Expand the quality corpus before deeper glyph-structure pruning.
 4. Keep PNG/JPEG adapter work outside core after the performance lab is stable.

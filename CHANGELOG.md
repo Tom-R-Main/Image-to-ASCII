@@ -46,6 +46,20 @@
   mono (+11.59%), and prepared integral-luma (+30.98%) are current regressions,
   mostly reflecting span-plan allocation overhead and benchmark noise in smaller
   rows.
+- Tuned the internal `auto` sampler policy after the first span-precompute run:
+  spans are now used for density, glyph-tone, glyph-structure, quadrant mono, and
+  Braille truecolor, while half-block, quadrant truecolor, and Braille mono stay
+  on the direct-box path. Explicit `integral_luma` and prepared integral-luma
+  reuse no longer build span arrays. The benchmark now records each row's
+  resolved policy (`direct_box`, `span_precompute`, `integral_luma`, or
+  `prepared_integral_luma`) and writes `bench/results/span-tuned.json`. In the
+  current run, the forced-span regressions are eliminated by policy (half
+  truecolor direct: -0.82% vs baseline; Braille mono direct: -2.08%; quadrant
+  truecolor direct: +2.27% benchmark noise), glyph-structure keeps a larger win
+  than the first span run (-15.68% truecolor, -16.06% mono), density truecolor
+  keeps a strong win (-22.07%), and prepared integral-luma drops its span-plan
+  allocation and improves vs the forced-span artifact (-17.56%) while remaining
+  slightly above the older baseline in this run.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on
