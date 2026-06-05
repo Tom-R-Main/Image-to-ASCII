@@ -279,6 +279,7 @@ fn writeMermaidUsage(writer: *std.Io.Writer) !void {
         \\  stateDiagram[-v2] — states, [*] start/end, A --> B : label.
         \\  classDiagram    — class cards with members; <|-- *-- o-- --> ..> .. .
         \\  erDiagram       — entity cards with attributes; ||--o{ cardinality.
+        \\  cardDiagram     — requirement/architecture/C4-style compartment cards.
         \\Comments use %%. Unsupported syntax is reported as file:line:col.
         \\
     );

@@ -1,0 +1,11 @@
+cardDiagram
+  direction LR
+  person Agent "Planning Agent" {
+    model: LLM
+    role: edits diagrams
+  }
+  component Renderer "Cell Render" {
+    tech: Zig
+    output: Frame + ANSI
+  }
+  Agent --> Renderer : emits cardDiagram

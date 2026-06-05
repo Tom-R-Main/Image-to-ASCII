@@ -877,9 +877,9 @@ Must include:
     renderer.~~ ✅
 11. ~~Include edge-label and end-label/cardinality extents in the layout's size
     so they never clip.~~ ✅
-12. Reuse the card renderer for requirement / architecture / C4 cards; spread
-    multiple same-side class decorations across the parent's edge.
-13. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+12. ~~Reuse the card renderer for requirement / architecture / C4 cards.~~ ✅
+13. Spread multiple same-side class decorations across the parent's edge.
+14. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
     becomes the next measured bottleneck.
 5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

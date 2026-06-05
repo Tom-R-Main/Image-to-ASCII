@@ -12,6 +12,7 @@ const flowchart = @import("../mermaid/flowchart.zig");
 const state = @import("../mermaid/state.zig");
 const class = @import("../mermaid/class.zig");
 const er = @import("../mermaid/er.zig");
+const card = @import("../mermaid/card.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -137,6 +138,20 @@ pub fn renderMermaidEr(
     diagnostic: *?er.MermaidError,
 ) (GraphRenderError || er.ParseError)!core.Frame {
     var parsed = try er.parseEr(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a card diagram and render it. Requirement, architecture, and C4-style
+/// cards lower to compartment nodes, so this reuses the same graph renderer as
+/// class and ER diagrams.
+pub fn renderMermaidCard(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?card.MermaidError,
+) (GraphRenderError || card.ParseError)!core.Frame {
+    var parsed = try card.parseCard(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -510,6 +525,24 @@ test "renders an ER diagram with entity cards and cardinality (golden)" {
 
     var diag: ?er.MermaidError = null;
     var frame = try renderMermaidEr(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "renders a card diagram with compartment cards (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/card/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/card/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+
+    var diag: ?card.MermaidError = null;
+    var frame = try renderMermaidCard(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
     defer frame.deinit(testing.allocator);
     const got = try frameToText(testing.allocator, frame);
     defer testing.allocator.free(got);

@@ -134,6 +134,17 @@
   small layout row drops from 9 to 8 allocations and from 33.2us to 14.8us
   median; small render drops from 13 to 11 allocations and from 34.6us to 18.6us
   median in this local ReleaseFast run.
+- Added a **card-diagram** frontend (`cardDiagram`, `requirementDiagram`,
+  `architectureDiagram`, `c4Diagram`, `C4Context`, `C4Container`,
+  `C4Component`) for requirement, architecture, and C4-style planning views.
+  Cards (`card`, `requirement`, `element`, `person`, `system`, `container`,
+  `component`, `database`, `queue`) lower to graph-IR compartment nodes, so the
+  implementation reuses the existing graph layout and card renderer instead of
+  adding a new renderer. Relationships support `-->`, `--`, `..>`, `..`, and
+  named requirement arrows such as `Agent - satisfies -> REQ-1`. New public API:
+  `parseCard`, `renderMermaidCard`. Golden fixture in `testdata/mermaid/card/`.
+- Horizontal graph layouts now expand rank spacing when edge labels require more
+  room, avoiding label/card collisions in LR architecture and C4-style diagrams.
 
 ### Library
 

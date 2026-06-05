@@ -1,15 +1,16 @@
 //! Front door for Mermaid rendering: sniffs the diagram header and dispatches to
-//! the flowchart or sequence backend. Lets one entry point (and the CLI) accept
-//! any supported `.mmd` file.
+//! the diagram backend. Lets one entry point (and the CLI) accept any supported
+//! `.mmd` file.
 
 const std = @import("std");
 const core = @import("../../core.zig");
 const cc = @import("../../canvas/cell_canvas.zig");
 const errors = @import("../mermaid/errors.zig");
+const card = @import("../mermaid/card.zig");
 const graph_renderer = @import("graph_renderer.zig");
 const sequence_renderer = @import("sequence_renderer.zig");
 
-pub const DiagramKind = enum { flowchart, sequence, state, class, er };
+pub const DiagramKind = enum { flowchart, sequence, state, class, er, card };
 
 pub const MermaidRenderOptions = struct {
     glyph_set: cc.GlyphSet = .unicode_box,
@@ -35,6 +36,7 @@ pub fn detectKind(source: []const u8) ?DiagramKind {
         if (std.mem.eql(u8, word, "stateDiagram") or std.mem.eql(u8, word, "stateDiagram-v2")) return .state;
         if (std.mem.eql(u8, word, "classDiagram")) return .class;
         if (std.mem.eql(u8, word, "erDiagram")) return .er;
+        if (card.isHeader(word)) return .card;
         return null;
     }
     return null;
@@ -54,7 +56,7 @@ pub fn renderMermaid(
             .kind = .missing_header,
             .line = 1,
             .column = 1,
-            .message = "expected a 'flowchart', 'graph', 'sequenceDiagram', 'stateDiagram', 'classDiagram', or 'erDiagram' header",
+            .message = "expected a supported Mermaid diagram header",
         };
         return error.MermaidSyntax;
     };
@@ -77,6 +79,10 @@ pub fn renderMermaid(
             .color = options.color,
         }, diagnostic),
         .er => graph_renderer.renderMermaidEr(gpa, source, .{
+            .glyph_set = options.glyph_set,
+            .color = options.color,
+        }, diagnostic),
+        .card => graph_renderer.renderMermaidCard(gpa, source, .{
             .glyph_set = options.glyph_set,
             .color = options.color,
         }, diagnostic),
@@ -104,6 +110,8 @@ test "detects diagram kinds from the header" {
     try testing.expectEqual(DiagramKind.state, detectKind("stateDiagram\n A --> B\n").?);
     try testing.expectEqual(DiagramKind.class, detectKind("classDiagram\n class A\n").?);
     try testing.expectEqual(DiagramKind.er, detectKind("erDiagram\n A ||--o{ B\n").?);
+    try testing.expectEqual(DiagramKind.card, detectKind("cardDiagram\n card A\n").?);
+    try testing.expectEqual(DiagramKind.card, detectKind("C4Context\n component API\n").?);
     try testing.expect(detectKind("nonsense\n") == null);
     try testing.expect(detectKind("\n\n") == null);
 }
@@ -139,6 +147,13 @@ test "renderMermaid dispatches to the class backend" {
 test "renderMermaid dispatches to the ER backend" {
     var diag: ?errors.MermaidError = null;
     var frame = try renderMermaid(testing.allocator, "erDiagram\n CUSTOMER ||--o{ ORDER : places\n", .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    try testing.expect(frame.columns > 0 and frame.rows > 0);
+}
+
+test "renderMermaid dispatches to the card backend" {
+    var diag: ?errors.MermaidError = null;
+    var frame = try renderMermaid(testing.allocator, "cardDiagram\n component API \"API\"\n", .{ .color = .none }, &diag);
     defer frame.deinit(testing.allocator);
     try testing.expect(frame.columns > 0 and frame.rows > 0);
 }

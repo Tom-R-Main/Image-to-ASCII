@@ -1,0 +1,7 @@
++----------------------+                   +----------------------+
+|    Planning Agent    |                   |     Cell Render      |
++----------------------+ emits cardDiagram +----------------------+
+| kind: person         |------------------>| kind: component      |
+| model: LLM           |                   | tech: Zig            |
+| role: edits diagrams |                   | output: Frame + ANSI |
++----------------------+                   +----------------------+

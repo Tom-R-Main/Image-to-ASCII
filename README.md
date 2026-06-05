@@ -366,8 +366,7 @@ core module still exposes raw `ImageView`/`Rgba8` input and does not export deco
 
 ### `mermaid` subcommand
 
-Render a Mermaid `.mmd` file straight to the terminal. The diagram type (flowchart, sequence, or state) is auto-detected
-from the header:
+Render a Mermaid `.mmd` file straight to the terminal. The diagram type is auto-detected from the header:
 
 ```sh
 # Flowchart, box-drawing output (truecolor by default):
@@ -410,6 +409,20 @@ state diagrams) reuse the flowchart graph layout and the compartment-node render
    +---------+  +-------+
    | Session |  | Admin |
    +---------+  +-------+
+```
+
+Card diagrams (`cardDiagram`, `requirementDiagram`, `architectureDiagram`, `c4Diagram`, and `C4Context`/`C4Container`/
+`C4Component` aliases) are a small repo-native subset for requirement, architecture, and C4-style planning views. Cards
+become the same compartment nodes used by class/ER diagrams:
+
+```text
++----------------------+                   +----------------------+
+|    Planning Agent    |                   |     Cell Render      |
++----------------------+ emits cardDiagram +----------------------+
+| kind: person         |------------------>| kind: component      |
+| model: LLM           |                   | tech: Zig            |
+| role: edits diagrams |                   | output: Frame + ANSI |
++----------------------+                   +----------------------+
 ```
 
 To fit a diagram into a bounded TUI pane, pass viewport flags (the built binary is `cell-render`):

@@ -180,7 +180,7 @@ const Engine = struct {
         try self.bucketRanks();
         try self.orderRanks();
         try self.assignSecondary();
-        self.assignPrimary();
+        try self.assignPrimary();
         self.mapToCells();
         const edges = try self.routeEdges();
         const dims = try self.shiftToOrigin(edges);
@@ -497,7 +497,8 @@ const Engine = struct {
 
     // -- primary coordinates ------------------------------------------------
 
-    fn assignPrimary(self: *Engine) void {
+    fn assignPrimary(self: *Engine) LayoutError!void {
+        const rank_gap = try self.effectiveRankGap();
         var cursor: i32 = 0;
         for (self.ranks.items) |bucket| {
             var band: u32 = 1;
@@ -507,8 +508,21 @@ const Engine = struct {
                 const slack: i32 = @intCast((band - ln.pri_size) / 2);
                 ln.pri_pos = cursor + slack;
             }
-            cursor += @as(i32, @intCast(band)) + @as(i32, @intCast(self.options.rank_gap));
+            cursor += @as(i32, @intCast(band)) + @as(i32, @intCast(rank_gap));
         }
+    }
+
+    fn effectiveRankGap(self: *Engine) LayoutError!u32 {
+        var gap = self.options.rank_gap;
+        if (!self.vertical) {
+            for (self.diagram.edges) |edge| {
+                if (edge.label) |label| {
+                    const width = try text_measure.width(label);
+                    gap = @max(gap, width + 2);
+                }
+            }
+        }
+        return gap;
     }
 
     // -- map (primary,secondary) -> (col,row) -------------------------------

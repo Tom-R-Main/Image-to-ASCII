@@ -307,8 +307,40 @@ full crow's-foot glyph geometry. Edge labels and endpoint labels are included in
 the layout bounds before the graph is shifted to the origin, so narrow diagrams
 still keep cardinality text inside the emitted canvas.
 
+## Card Diagrams
+
+Card diagrams (`src/diagram/mermaid/card.zig`) are the first requirement /
+architecture / C4-style planning frontend. They intentionally use a compact,
+LLM-editable subset rather than full Mermaid requirement or C4 syntax:
+
+```text
+cardDiagram
+  direction LR
+  person Agent "Planning Agent" {
+    model: LLM
+    role: edits diagrams
+  }
+  component Renderer "Cell Render" {
+    tech: Zig
+    output: Frame + ANSI
+  }
+  Agent --> Renderer : emits cardDiagram
+```
+
+Supported headers are `cardDiagram`, `requirementDiagram`,
+`architectureDiagram`, `c4Diagram`, `C4Context`, `C4Container`, and
+`C4Component`. Supported card kinds are `card`, `requirement`, `element`,
+`person`, `system`, `container`, `component`, `database`, and `queue`. Block
+body lines are kept verbatim in one compartment, with the card kind prepended as
+`kind: ...`. Relationships support `-->`, `--`, `..>`, `..`, and requirement
+style named arrows such as `Agent - satisfies -> REQ-1`.
+
+The output reuses graph layout and the compartment-node renderer. For horizontal
+card diagrams, rank spacing expands to fit edge labels so architecture/C4 labels
+do not collide with card content.
+
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart, sequence, state, class, or ER backend, so
+routes to the flowchart, sequence, state, class, ER, or card backend, so
 `cell-render mermaid file.mmd` handles any of them.
 
 ## Bounded Panes (Viewport)
@@ -339,15 +371,15 @@ size). With no bounds, output is natural (unchanged).
 
 ## Status and Next
 
-The `mermaid` CLI subcommand renders flowchart, sequence, state, class, and ER
+The `mermaid` CLI subcommand renders flowchart, sequence, state, class, ER, and card
 diagrams (`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
 plus the viewport flags above); syntax errors print as `file:line:col: message`.
 Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
 labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
 class and ER diagrams render compartment cards (with UML relationship ends and
-cardinality respectively). Next: reuse the card renderer for
-requirement/architecture/C4 cards, and spread multiple same-side class
-decorations across the parent's edge.
+cardinality respectively); card diagrams render requirement/architecture/C4-style
+planning cards through the same compartment renderer. Next: spread multiple
+same-side class decorations across the parent's edge.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.
