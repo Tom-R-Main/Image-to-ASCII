@@ -23,8 +23,15 @@ pub const Mapping = struct {
 
 pub const Sample = struct {
     linear: color.LinearRgb,
-    rgb: core.Rgb8,
     luma: f32,
+
+    /// Encode this sample's linear color to sRGB. Deferred (not computed during
+    /// sampling) because most subcell samples are only used for their linear
+    /// color or luma; encoding eagerly would run `linearToSrgb` (a `pow`) for
+    /// every subcell even when the result is discarded.
+    pub fn rgb(self: Sample) core.Rgb8 {
+        return color.encodeSrgb(self.linear);
+    }
 };
 
 pub fn fittedSize(image: core.ImageView, terminal: core.TerminalProfile, fit: core.FitMode) Size {
@@ -147,7 +154,6 @@ pub fn areaSample(
 
     return .{
         .linear = accum,
-        .rgb = color.encodeSrgb(accum),
         .luma = luma.perceptualLuminance(accum.r, accum.g, accum.b),
     };
 }
@@ -229,5 +235,5 @@ test "area sample averages tiny image in linear light" {
         1.0,
     );
 
-    try std.testing.expect(s.rgb.r > 180 and s.rgb.r < 190);
+    try std.testing.expect(s.rgb().r > 180 and s.rgb().r < 190);
 }

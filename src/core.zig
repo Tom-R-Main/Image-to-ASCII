@@ -250,7 +250,7 @@ fn renderDensity(
             frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
 
             if (frame.color != .none) {
-                frame.fg[idx] = s.rgb;
+                frame.fg[idx] = s.rgb();
                 frame.bg[idx] = background;
             }
         }
@@ -285,8 +285,8 @@ fn renderHalfBlock(
                 frame.codepoints[idx] = halfBlockMonoCodepoint(top.luma, bottom.luma, options);
             } else {
                 frame.codepoints[idx] = '▀';
-                frame.fg[idx] = top.rgb;
-                frame.bg[idx] = bottom.rgb;
+                frame.fg[idx] = top.rgb();
+                frame.bg[idx] = bottom.rgb();
             }
         }
     }
@@ -442,7 +442,7 @@ fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sa
     }
 
     if (fg_count == 0) {
-        frame.fg[idx] = samples[0].rgb;
+        frame.fg[idx] = samples[0].rgb();
     } else {
         frame.fg[idx] = color.encodeSrgb(color.representative(fg_buf[0..fg_count], stat));
     }
