@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     const stderr = &stderr_file_writer.interface;
 
     const options = parseArgs(args) catch |err| {
-        try stderr.print("error: {s}\n\n", .{@errorName(err)});
+        try stderr.print("error: {s}\n\n", .{describeCliError(err)});
         try writeUsage(stderr);
         try stderr.flush();
         return err;
@@ -45,10 +45,19 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    const image = try makeSynthetic(arena, options.synthetic, 96, 48);
+    renderSynthetic(stdout, arena, options) catch |err| {
+        try stderr.print("error: {s}\n", .{describeCliError(err)});
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    try stdout.flush();
+}
+
+fn renderSynthetic(writer: *std.Io.Writer, allocator: std.mem.Allocator, options: CliOptions) !void {
+    const image = try makeSynthetic(allocator, options.synthetic, 96, 48);
     try ascii.renderToWriter(
-        stdout,
-        arena,
+        writer,
+        allocator,
         image,
         .{
             .columns = options.width,
@@ -64,7 +73,6 @@ pub fn main(init: std.process.Init) !void {
             .invert = options.invert,
         },
     );
-    try stdout.flush();
 }
 
 fn parseArgs(args: []const []const u8) !CliOptions {
@@ -146,6 +154,8 @@ fn parsePartition(value: []const u8) ?ascii.PartitionKind {
 
 fn parseColor(value: []const u8) ?ascii.ColorMode {
     if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "16")) return .ansi16;
+    if (std.mem.eql(u8, value, "256")) return .ansi256;
     if (std.mem.eql(u8, value, "truecolor")) return .truecolor;
     return null;
 }
@@ -220,6 +230,23 @@ fn argsContain(args: []const []const u8, needle: []const u8) bool {
     return false;
 }
 
+fn describeCliError(err: anyerror) []const u8 {
+    return switch (err) {
+        error.MissingValue => "expected a value after the previous flag",
+        error.InvalidSynthetic => "synthetic input must be gradient, checkerboard, or color-bars",
+        error.InvalidMode => "mode must be density, partition, or braille",
+        error.InvalidPartition => "partition must be density, half, or quadrant",
+        error.InvalidColor => "color must be none, 16, 256, or truecolor",
+        error.InvalidFit => "fit must be contain, cover, or stretch",
+        error.InvalidDither => "dither must be none, ordered-2x2, or ordered-4x4",
+        error.InvalidDimension => "width and height must be positive integers",
+        error.UnknownArgument => "unknown argument",
+        ascii.Error.UnsupportedColorMode => "ANSI 16 and 256 color output are not implemented yet; use none or truecolor",
+        ascii.Error.UnsupportedRenderMode => "requested renderer is not implemented or not supported by the selected symbols",
+        else => @errorName(err),
+    };
+}
+
 fn writeUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\usage: image-to-ascii [options]
@@ -230,7 +257,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --height N
         \\  --mode density|partition|braille
         \\  --partition density|half|quadrant
-        \\  --color none|truecolor
+        \\  --color none|16|256|truecolor
         \\  --fit contain|cover|stretch
         \\  --dither none|ordered-2x2|ordered-4x4
         \\  --invert
@@ -266,4 +293,68 @@ test "parse minimal cli options" {
     try std.testing.expectEqual(ascii.RenderMode.density, options.mode);
     try std.testing.expectEqual(ascii.ColorMode.none, options.color);
     try std.testing.expectEqual(ascii.DitherMode.ordered_2x2, options.dither);
+}
+
+test "CLI density gradient golden output" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var buffer: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try renderSynthetic(&writer, arena_state.allocator(), .{
+        .synthetic = .gradient,
+        .width = 4,
+        .height = 2,
+        .mode = .density,
+        .color = .none,
+    });
+
+    try std.testing.expectEqualStrings("--=+\n**##\n", writer.buffered());
+}
+
+test "CLI checkerboard quadrant golden output" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var buffer: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try renderSynthetic(&writer, arena_state.allocator(), .{
+        .synthetic = .checkerboard,
+        .width = 4,
+        .height = 2,
+        .mode = .partition,
+        .partition = .quadrant_2x2,
+        .color = .none,
+        .dither = .ordered_2x2,
+    });
+
+    try std.testing.expectEqualStrings("▜▜▜▜\n▜▜▜▜\n", writer.buffered());
+}
+
+test "CLI checkerboard Braille golden output" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var buffer: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try renderSynthetic(&writer, arena_state.allocator(), .{
+        .synthetic = .checkerboard,
+        .width = 4,
+        .height = 2,
+        .mode = .braille,
+        .color = .none,
+        .dither = .ordered_4x4,
+    });
+
+    try std.testing.expectEqualStrings("⢝⢽⢝⢽\n⢝⢽⢝⢽\n", writer.buffered());
+}
+
+test "CLI accepts ansi color flags even though core rejects them for now" {
+    const args = [_][]const u8{
+        "image-to-ascii",
+        "--color",
+        "256",
+    };
+    const options = try parseArgs(&args);
+    try std.testing.expectEqual(ascii.ColorMode.ansi256, options.color);
 }

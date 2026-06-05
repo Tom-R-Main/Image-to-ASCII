@@ -41,6 +41,7 @@ Requires Zig `0.16.0`.
 ```sh
 zig build test
 zig build
+zig build bench
 ```
 
 ## Current Status

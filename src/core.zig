@@ -9,7 +9,7 @@ const symbol = @import("symbol.zig");
 pub const Rgba8 = pixel.Rgba8;
 pub const Rgb8 = pixel.Rgb8;
 
-pub const Error = error{
+pub const ValidationError = error{
     EmptyImage,
     EmptyTerminal,
     InvalidStride,
@@ -17,8 +17,14 @@ pub const Error = error{
     InvalidCellAspect,
     EmptyRamp,
     InvalidRampCodepoint,
-    UnsupportedRenderMode,
 };
+
+pub const RenderError = ValidationError || error{
+    UnsupportedRenderMode,
+    UnsupportedColorMode,
+};
+
+pub const Error = RenderError;
 
 pub const RenderMode = enum {
     density,
@@ -116,34 +122,34 @@ pub const Frame = struct {
     }
 };
 
-pub fn validateImage(image: ImageView) Error!void {
-    if (image.width == 0 or image.height == 0) return Error.EmptyImage;
+pub fn validateImage(image: ImageView) ValidationError!void {
+    if (image.width == 0 or image.height == 0) return ValidationError.EmptyImage;
 
-    const min_stride = std.math.mul(usize, image.width, @sizeOf(Rgba8)) catch return Error.InvalidStride;
-    if (image.stride < min_stride or image.stride % @sizeOf(Rgba8) != 0) return Error.InvalidStride;
+    const min_stride = std.math.mul(usize, image.width, @sizeOf(Rgba8)) catch return ValidationError.InvalidStride;
+    if (image.stride < min_stride or image.stride % @sizeOf(Rgba8) != 0) return ValidationError.InvalidStride;
 
     const rows_before_last = image.height - 1;
-    const prefix_bytes = std.math.mul(usize, rows_before_last, image.stride) catch return Error.InvalidPixelBuffer;
-    const required_bytes = std.math.add(usize, prefix_bytes, min_stride) catch return Error.InvalidPixelBuffer;
-    const available_bytes = std.math.mul(usize, image.pixels.len, @sizeOf(Rgba8)) catch return Error.InvalidPixelBuffer;
-    if (available_bytes < required_bytes) return Error.InvalidPixelBuffer;
+    const prefix_bytes = std.math.mul(usize, rows_before_last, image.stride) catch return ValidationError.InvalidPixelBuffer;
+    const required_bytes = std.math.add(usize, prefix_bytes, min_stride) catch return ValidationError.InvalidPixelBuffer;
+    const available_bytes = std.math.mul(usize, image.pixels.len, @sizeOf(Rgba8)) catch return ValidationError.InvalidPixelBuffer;
+    if (available_bytes < required_bytes) return ValidationError.InvalidPixelBuffer;
 }
 
-pub fn validateTerminal(terminal: TerminalProfile) Error!void {
-    if (terminal.columns == 0 or terminal.rows == 0) return Error.EmptyTerminal;
+pub fn validateTerminal(terminal: TerminalProfile) ValidationError!void {
+    if (terminal.columns == 0 or terminal.rows == 0) return ValidationError.EmptyTerminal;
     if (!std.math.isFinite(terminal.cell_aspect) or terminal.cell_aspect <= 0.0) {
-        return Error.InvalidCellAspect;
+        return ValidationError.InvalidCellAspect;
     }
 }
 
-pub fn validateOptions(options: Options) Error!void {
-    if (options.ramp.len == 0) return Error.EmptyRamp;
+pub fn validateOptions(options: Options) ValidationError!void {
+    if (options.ramp.len == 0) return ValidationError.EmptyRamp;
     for (options.ramp) |c| {
-        if (c < 0x20 or c == 0x7f) return Error.InvalidRampCodepoint;
+        if (c < 0x20 or c == 0x7f) return ValidationError.InvalidRampCodepoint;
     }
 }
 
-pub fn validateInputs(image: ImageView, terminal: TerminalProfile, options: Options) Error!void {
+pub fn validateInputs(image: ImageView, terminal: TerminalProfile, options: Options) ValidationError!void {
     try validateImage(image);
     try validateTerminal(terminal);
     try validateOptions(options);
@@ -156,6 +162,7 @@ pub fn renderToCells(
     options: Options,
 ) !Frame {
     try validateInputs(image, terminal, options);
+    try validateSupportedColor(terminal.color);
 
     return switch (options.mode) {
         .density => renderDensity(allocator, image, terminal, options),
@@ -181,6 +188,13 @@ pub fn renderToWriter(
     defer frame.deinit(allocator);
 
     try writeFrameAnsi(writer, frame);
+}
+
+fn validateSupportedColor(color_mode: ColorMode) RenderError!void {
+    switch (color_mode) {
+        .none, .truecolor => {},
+        .ansi16, .ansi256 => return Error.UnsupportedColorMode,
+    }
 }
 
 fn allocFrame(allocator: std.mem.Allocator, columns: u32, rows: u32, color_mode: ColorMode) !Frame {
@@ -510,7 +524,7 @@ test "validates image dimensions" {
         .pixels = &pixels,
     });
 
-    try std.testing.expectError(Error.EmptyImage, validateImage(.{
+    try std.testing.expectError(ValidationError.EmptyImage, validateImage(.{
         .width = 0,
         .height = 1,
         .stride = @sizeOf(Rgba8),
@@ -524,21 +538,21 @@ test "validates stride and pixel buffer length" {
         .{ .r = 0, .g = 0, .b = 0, .a = 255 },
     };
 
-    try std.testing.expectError(Error.InvalidStride, validateImage(.{
+    try std.testing.expectError(ValidationError.InvalidStride, validateImage(.{
         .width = 2,
         .height = 1,
         .stride = @sizeOf(Rgba8),
         .pixels = &pixels,
     }));
 
-    try std.testing.expectError(Error.InvalidStride, validateImage(.{
+    try std.testing.expectError(ValidationError.InvalidStride, validateImage(.{
         .width = 1,
         .height = 1,
         .stride = @sizeOf(Rgba8) + 1,
         .pixels = &pixels,
     }));
 
-    try std.testing.expectError(Error.InvalidPixelBuffer, validateImage(.{
+    try std.testing.expectError(ValidationError.InvalidPixelBuffer, validateImage(.{
         .width = 2,
         .height = 2,
         .stride = 2 * @sizeOf(Rgba8),
@@ -549,12 +563,12 @@ test "validates stride and pixel buffer length" {
 test "validates terminal dimensions and aspect" {
     try validateTerminal(.{ .columns = 80, .rows = 24 });
 
-    try std.testing.expectError(Error.EmptyTerminal, validateTerminal(.{
+    try std.testing.expectError(ValidationError.EmptyTerminal, validateTerminal(.{
         .columns = 0,
         .rows = 24,
     }));
 
-    try std.testing.expectError(Error.InvalidCellAspect, validateTerminal(.{
+    try std.testing.expectError(ValidationError.InvalidCellAspect, validateTerminal(.{
         .columns = 80,
         .rows = 24,
         .cell_aspect = 0.0,
@@ -563,8 +577,8 @@ test "validates terminal dimensions and aspect" {
 
 test "validates density ramp" {
     try validateOptions(.{});
-    try std.testing.expectError(Error.EmptyRamp, validateOptions(.{ .ramp = "" }));
-    try std.testing.expectError(Error.InvalidRampCodepoint, validateOptions(.{ .ramp = "\x1b" }));
+    try std.testing.expectError(ValidationError.EmptyRamp, validateOptions(.{ .ramp = "" }));
+    try std.testing.expectError(ValidationError.InvalidRampCodepoint, validateOptions(.{ .ramp = "\x1b" }));
 }
 
 test "frame deinit frees all buffers" {
@@ -728,4 +742,51 @@ test "ordered dithering changes low quadrant fixture deterministically" {
     defer frame.deinit(allocator);
 
     try std.testing.expectEqual(@as(u21, '▘'), frame.codepoints[0]);
+}
+
+test "unsupported color modes are rejected explicitly" {
+    const pixels = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
+
+    try std.testing.expectError(Error.UnsupportedColorMode, renderToCells(
+        std.testing.allocator,
+        .{ .width = 1, .height = 1, .stride = @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .ansi256 },
+        .{ .mode = .density, .fit = .stretch },
+    ));
+}
+
+test "quadrant renderer is rejected for ascii-only terminals" {
+    const pixels = [_]Rgba8{
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+    };
+
+    try std.testing.expectError(Error.UnsupportedRenderMode, renderToCells(
+        std.testing.allocator,
+        .{ .width = 2, .height = 2, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .ascii_only },
+        .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
+    ));
+}
+
+test "braille renderer requires braille symbol capability" {
+    const pixels = [_]Rgba8{
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+        .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+    };
+
+    try std.testing.expectError(Error.UnsupportedRenderMode, renderToCells(
+        std.testing.allocator,
+        .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_basic },
+        .{ .mode = .braille, .fit = .stretch },
+    ));
 }
