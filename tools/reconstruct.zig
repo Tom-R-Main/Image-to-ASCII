@@ -33,12 +33,33 @@ pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
             const fg: Rgb = if (frame.color != .none) frame.fg[idx] else .{ .r = 255, .g = 255, .b = 255 };
             const bg: Rgb = if (frame.color != .none) frame.bg[idx] else .{ .r = 0, .g = 0, .b = 0 };
 
-            var sy: u32 = 0;
-            while (sy < cell_h) : (sy += 1) {
-                var sx: u32 = 0;
-                while (sx < cell_w) : (sx += 1) {
-                    const on = subpixelOn(cp, sx, sy);
-                    out.set(col * cell_w + sx, row * cell_h + sy, if (on) fg else bg);
+            if (structuralMask(cp)) |kind| {
+                // Block / Braille glyphs have real sub-cell structure: paint each
+                // subpixel fg or bg per the glyph mask.
+                var sy: u32 = 0;
+                while (sy < cell_h) : (sy += 1) {
+                    var sx: u32 = 0;
+                    while (sx < cell_w) : (sx += 1) {
+                        const on = subpixelOn(kind, cp, sx, sy);
+                        out.set(col * cell_w + sx, row * cell_h + sy, if (on) fg else bg);
+                    }
+                }
+            } else {
+                // Tonal glyphs (density / glyph-tone) have no sub-cell structure;
+                // reconstruct the cell as a uniform blend of bg->fg by perceived
+                // tone, the property the renderer actually selected on.
+                // Raw ink coverage IS the cell's linear-light fraction for ink
+                // over background, so blend in linear. This honestly reflects the
+                // limited dynamic range of glyph tone (a glyph rarely exceeds
+                // ~0.3 coverage).
+                const coverage = coverageOf(cp);
+                const c = blendLinear(bg, fg, coverage);
+                var sy: u32 = 0;
+                while (sy < cell_h) : (sy += 1) {
+                    var sx: u32 = 0;
+                    while (sx < cell_w) : (sx += 1) {
+                        out.set(col * cell_w + sx, row * cell_h + sy, c);
+                    }
                 }
             }
         }
@@ -46,21 +67,38 @@ pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
     return out;
 }
 
-fn subpixelOn(cp: u21, sx: u32, sy: u32) bool {
-    // Braille block U+2800..U+28FF: the low byte is the dot mask.
-    if (cp >= 0x2800 and cp <= 0x28FF) {
-        const mask: u8 = @intCast(cp - 0x2800);
-        return (mask & brailleDotMask(sx, sy)) != 0;
+const StructuralKind = enum { braille, block };
+
+fn structuralMask(cp: u21) ?StructuralKind {
+    if (cp >= 0x2800 and cp <= 0x28FF) return .braille;
+    // Block glyphs carry structure; space is tonal (empty == black/bg either way).
+    if (cp != ' ' and quadrantMaskOf(cp) != null) return .block;
+    return null;
+}
+
+fn subpixelOn(kind: StructuralKind, cp: u21, sx: u32, sy: u32) bool {
+    switch (kind) {
+        .braille => {
+            const mask: u8 = @intCast(cp - 0x2800);
+            return (mask & brailleDotMask(sx, sy)) != 0;
+        },
+        .block => {
+            const mask = quadrantMaskOf(cp).?;
+            const qx = sx; // 0..1
+            const qy = sy / 2; // rows {0,1} -> top, {2,3} -> bottom
+            const bit = @as(u4, 1) << @intCast(qy * 2 + qx);
+            return (mask & bit) != 0;
+        },
     }
-    // Block quadrant / half / full / space.
-    if (quadrantMaskOf(cp)) |mask| {
-        const qx = sx; // 0..1
-        const qy = sy / 2; // rows {0,1} -> top, {2,3} -> bottom
-        const bit = @as(u4, 1) << @intCast(qy * 2 + qx);
-        return (mask & bit) != 0;
-    }
-    // Density / unknown: ordered halftone of the glyph's ramp coverage.
-    return orderedOn(sx, sy, densityCoverage(cp));
+}
+
+fn blendLinear(bg: Rgb, fg: Rgb, tone: f32) Rgb {
+    const t = std.math.clamp(tone, 0.0, 1.0);
+    return .{
+        .r = common.linearToSrgb(common.srgbToLinear(bg.r) * (1.0 - t) + common.srgbToLinear(fg.r) * t),
+        .g = common.linearToSrgb(common.srgbToLinear(bg.g) * (1.0 - t) + common.srgbToLinear(fg.g) * t),
+        .b = common.linearToSrgb(common.srgbToLinear(bg.b) * (1.0 - t) + common.srgbToLinear(fg.b) * t),
+    };
 }
 
 // Mirrors src/symbol.zig brailleDotMask (kept local; symbol.zig is core-internal).
@@ -98,7 +136,12 @@ fn quadrantMaskOf(cp: u21) ?u4 {
     };
 }
 
-fn densityCoverage(cp: u21) f32 {
+fn coverageOf(cp: u21) f32 {
+    // Measured ink fraction from the built-in glyph atlas (covers all printable
+    // ASCII, so it serves both density ramps and glyph-tone). Fall back to a
+    // linear ramp position scaled into a plausible coverage range, then mid-gray.
+    if (ascii.defaultGlyphCoverage(cp)) |cov| return cov;
+
     const ramp = ascii.default_density_ramp;
     for (ramp, 0..) |c, i| {
         if (@as(u21, c) == cp) {
@@ -106,17 +149,6 @@ fn densityCoverage(cp: u21) f32 {
         }
     }
     return 0.5;
-}
-
-fn orderedOn(sx: u32, sy: u32, coverage: f32) bool {
-    // 2x4 Bayer-style thresholds in (0, 1).
-    const thresholds = [cell_h][cell_w]f32{
-        .{ 0.0625, 0.5625 },
-        .{ 0.8125, 0.3125 },
-        .{ 0.1875, 0.6875 },
-        .{ 0.9375, 0.4375 },
-    };
-    return coverage > thresholds[sy][sx];
 }
 
 test "braille reconstruction respects dot layout" {

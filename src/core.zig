@@ -3,6 +3,7 @@ const std = @import("std");
 const ansi = @import("ansi.zig");
 const color = @import("color.zig");
 const dither = @import("dither.zig");
+const glyph = @import("glyph.zig");
 const luma = @import("luma.zig");
 const pixel = @import("pixel.zig");
 const sample = @import("sample.zig");
@@ -186,8 +187,20 @@ pub fn renderToCells(
             else => Error.UnsupportedRenderMode,
         },
         .braille => renderBraille(allocator, image, terminal, options),
+        .glyph_tone => renderGlyphTone(allocator, image, terminal, options),
         else => Error.UnsupportedRenderMode,
     };
+}
+
+/// Coverage of a codepoint in the built-in glyph-tone atlas, for tools.
+pub fn defaultGlyphCoverage(codepoint: u21) ?f32 {
+    return glyph.defaultCoverage(codepoint);
+}
+
+/// Perceived tone in [0, 1] of a codepoint (coverage normalized by the densest
+/// glyph), for tools reconstructing a glyph cell.
+pub fn defaultGlyphTone(codepoint: u21) ?f32 {
+    return glyph.defaultTone(codepoint);
 }
 
 pub fn renderToWriter(
@@ -282,6 +295,48 @@ fn renderDensity(
 
             const adjusted = luma.applyAdjustments(lum, options.contrast, options.brightness, options.invert);
             frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
+        }
+    }
+
+    return frame;
+}
+
+fn renderGlyphTone(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !Frame {
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
+    errdefer frame.deinit(allocator);
+
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+
+    const atlas = glyph.defaultAtlas();
+    const background = rgbFromBackground(terminal.background);
+
+    var row: u32 = 0;
+    while (row < mapping.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
+            const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
+
+            var lum: f32 = undefined;
+            if (frame.color == .none) {
+                lum = sample.regionLuma(image, terminal, integral, region);
+            } else {
+                const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                lum = s.luma;
+                frame.fg[idx] = s.rgb();
+                frame.bg[idx] = background;
+            }
+
+            const adjusted = luma.applyAdjustments(lum, options.contrast, options.brightness, options.invert);
+            frame.codepoints[idx] = atlas.selectByTone(adjusted);
         }
     }
 
@@ -763,6 +818,32 @@ test "quadrant renderer is rejected for ascii-only terminals" {
         .{ .columns = 1, .rows = 1, .color = .none, .symbols = .ascii_only },
         .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
     ));
+}
+
+test "glyph-tone maps tone extremes to space and the densest glyph" {
+    const allocator = std.testing.allocator;
+    const black = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
+    const white = [_]Rgba8{.{ .r = 255, .g = 255, .b = 255, .a = 255 }};
+
+    var dark = try renderToCells(
+        allocator,
+        .{ .width = 1, .height = 1, .stride = @sizeOf(Rgba8), .pixels = &black },
+        .{ .columns = 1, .rows = 1, .color = .none },
+        .{ .mode = .glyph_tone, .fit = .stretch },
+    );
+    defer dark.deinit(allocator);
+    try std.testing.expectEqual(@as(u21, ' '), dark.codepoints[0]);
+
+    var light = try renderToCells(
+        allocator,
+        .{ .width = 1, .height = 1, .stride = @sizeOf(Rgba8), .pixels = &white },
+        .{ .columns = 1, .rows = 1, .color = .none },
+        .{ .mode = .glyph_tone, .fit = .stretch },
+    );
+    defer light.deinit(allocator);
+    // The brightest tone selects a high-coverage glyph (not a space or a dot).
+    try std.testing.expect(light.codepoints[0] != ' ');
+    try std.testing.expect(glyph.defaultCoverage(light.codepoints[0]).? > 0.2);
 }
 
 test "integral_luma sampling matches direct_box for monochrome modes" {

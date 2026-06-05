@@ -31,6 +31,16 @@
 
 ### Added
 
+- Glyph-tone render mode (`RenderMode.glyph_tone`): a calibrated density path that
+  selects a glyph by its measured ink coverage rather than indexing a hand-authored
+  ramp linearly. Ships a built-in Level-0 atlas (`src/glyph_atlas.zig`, coverage per
+  printable ASCII glyph, generated from Monaco by `calibrate_font`). Monochrome and
+  truecolor; integral-sampler capable. Exposed as `--mode glyph-tone` in the CLI and
+  the harness. In quality-harness A/B it beats the linear density ramp (gradient
+  PSNR 13.7 -> 16.0 dB, SSIM 0.70 -> 0.87).
+- Harness reconstruction now models tonal glyphs (density / glyph-tone) as a uniform
+  linear blend by measured coverage, and structural glyphs (block / Braille) by their
+  exact masks, so PSNR/SSIM are meaningful for tone modes.
 - Configurable representative-color solve for two-color symbol families
   (`Options.color_stat`: `mean`, `trimmed_mean`, `median`) in linear light, per
   RESEARCH.md "Color Strategy". Quadrant and Braille foreground/background

@@ -186,6 +186,7 @@ fn parseMode(v: []const u8) ?ascii.RenderMode {
     if (std.mem.eql(u8, v, "density")) return .density;
     if (std.mem.eql(u8, v, "partition")) return .partition;
     if (std.mem.eql(u8, v, "braille")) return .braille;
+    if (std.mem.eql(u8, v, "glyph-tone")) return .glyph_tone;
     return null;
 }
 

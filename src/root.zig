@@ -19,6 +19,8 @@ pub const TerminalProfile = core.TerminalProfile;
 pub const TerminalSymbols = core.TerminalSymbols;
 pub const ValidationError = core.ValidationError;
 pub const default_density_ramp = core.default_density_ramp;
+pub const defaultGlyphCoverage = core.defaultGlyphCoverage;
+pub const defaultGlyphTone = core.defaultGlyphTone;
 pub const renderToCells = core.renderToCells;
 pub const renderToWriter = core.renderToWriter;
 pub const validateImage = core.validateImage;
@@ -31,6 +33,7 @@ test {
     _ = @import("color.zig");
     _ = @import("core.zig");
     _ = @import("dither.zig");
+    _ = @import("glyph.zig");
     _ = @import("integral.zig");
     _ = @import("luma.zig");
     _ = @import("sample.zig");
