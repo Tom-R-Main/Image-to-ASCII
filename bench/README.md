@@ -10,6 +10,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.js
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
+zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 ```
 
 `bench/results/baseline.json` is intentionally tracked as the current local baseline. Generated or large benchmark corpora
@@ -281,4 +282,34 @@ Current render-plus-diff vs workspace-only:
 case,workspace_case,workspace_ns,diff_ns,delta_pct,allocs_steady,bytes_steady,ansi_bytes
 workspace-render-plus-diff-repeat,workspace-density-truecolor-repeat,209312,221730,5.93,0,0,0
 prepared-workspace-render-plus-diff-repeat,prepared-workspace-density-integral-repeat,54598,60457,10.73,0,0,0
+```
+
+## Quality Corpus
+
+`bench/results/quality-corpus.json` is produced by the compare tool, not the render-kernel benchmark:
+
+```sh
+zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
+```
+
+The corpus uses small checked-in PPM fixtures and keeps decoders outside core. It covers slash glyph-structure,
+checkerboard Braille, thin-line quadrant, density gradient, truecolor half-block color bars, glyph-tone shape edges, and
+a low-contrast glyph-structure edge. Gates are intentionally conservative:
+
+- slash-line glyph-structure must render `/`,
+- PSNR / SSIM / edge-correlation must be finite,
+- each case has a low per-case minimum for the current reconstruction model,
+- any failure exits nonzero.
+
+Current local corpus:
+
+```text
+fixture,mode,partition,color,policy,output,psnr_db,ssim,edge_corr,slash
+slash-glyph-structure,glyph_structure,density_1x1,none,span_precompute,1x1,7.270,0.0428,0.3912,pass
+checkerboard-braille,braille,octant_2x4,none,direct_box,7x3,15.717,0.9365,0.9590,n/a
+thin-lines-quadrant,partition,quadrant_2x2,none,span_precompute,8x8,1.160,0.0017,1.0000,n/a
+gradient-density,density,density_1x1,none,span_precompute,16x8,11.792,0.6508,0.6705,n/a
+color-bars-half-truecolor,partition,half_1x2,truecolor,direct_box,13x5,19.612,0.9425,0.8498,n/a
+shape-glyph-tone,glyph_tone,density_1x1,none,span_precompute,16x8,12.812,0.8368,1.0000,n/a
+low-contrast-glyph-structure,glyph_structure,density_1x1,none,span_precompute,8x4,6.359,0.0042,-0.0673,n/a
 ```

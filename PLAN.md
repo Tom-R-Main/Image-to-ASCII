@@ -684,7 +684,7 @@ Must include:
 - render-workspace reuse API for frame buffers and render-shape scratch,
 - repeated-render benchmark rows with first-render and steady-state allocation counts,
 - ANSI frame-diff writer with dirty-run benchmarks,
-- quality ratchet hooks before more glyph tuning.
+- checked-in quality corpus with slash golden and finite-metric regression gates.
 
 ### `v0.3.0`: Glyph-Tone
 
@@ -739,7 +739,7 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Expand the quality corpus before deeper glyph-structure pruning.
+1. Optimize glyph-structure scoring against the quality corpus gate.
 2. Compare PNG/JPEG adapter options while keeping decoder dependencies outside core.
 3. Add TUI adapter integration notes for `RenderWorkspace` plus frame diffs.
-4. Continue low-level glyph scoring work once output bandwidth is no longer the bottleneck.
+4. Expand the corpus only when a new renderer mode or real-image adapter exposes uncovered failure cases.

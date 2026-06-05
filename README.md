@@ -196,6 +196,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
+zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 ```
 
 ### Quality harness
@@ -203,6 +204,9 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
 A measurement harness lives under `tools/` (`zig build compare`): it renders an image, reconstructs an approximate image
 from the emitted cells (tonal glyphs as a linear coverage blend; block/Braille by their exact masks; `glyph_structure` by
 calibrated ASCII masks), and scores it with PSNR / SSIM / edge-correlation — **no font rasterizer required**.
+Without arguments it runs the color-bars smoke plus the slash-line glyph golden. With `--input`, it preserves the explicit
+single-fixture path. With `--corpus testdata/corpus --out bench/results/quality-corpus.json`, it runs the checked-in
+quality corpus and fails on non-finite metrics, slash-golden failure, or per-case threshold regressions.
 `tools/calibrate_font.zig` rasterizes a real font via stb_truetype (public domain, vendored under `tools/stb/`, linked
 only into the tool) to generate the glyph atlas (per-glyph coverage + structural features) used by the glyph render
 modes. In harness A/B, glyph-tone beats the linear density ramp (gradient PSNR 13.7 → 16.0 dB, SSIM 0.70 → 0.87).

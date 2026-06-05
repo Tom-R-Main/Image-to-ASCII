@@ -80,6 +80,15 @@
   0 bytes for noop, 44 bytes for a single-cell change, 52 bytes for an 8-cell
   run, 123 bytes for one changed row, and zero steady-state allocations for the
   render-plus-diff repeat rows.
+- Added a checked-in quality corpus under `testdata/corpus` and extended
+  `zig build compare` with corpus mode:
+  `--corpus testdata/corpus --out bench/results/quality-corpus.json`. The corpus
+  covers slash glyph-structure, checkerboard Braille, thin-line quadrant,
+  density gradient, truecolor half-block color bars, glyph-tone shape edges, and
+  a low-contrast glyph-structure edge. The harness keeps the explicit `--input`
+  path, adds a default color-bars plus slash-golden smoke, writes finite
+  PSNR/SSIM/edge-correlation JSON rows with sampler policy, and exits nonzero on
+  slash-golden or threshold failures.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

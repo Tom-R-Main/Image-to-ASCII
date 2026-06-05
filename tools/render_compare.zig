@@ -11,8 +11,10 @@
 //!   zig build compare -- --input testdata/color-bars.ppm --mode partition \
 //!       --partition quadrant --color truecolor --fit contain --stat median \
 //!       --write-recon out-recon.ppm --write-ref out-ref.ppm
+//!   zig build compare -- --corpus testdata/corpus --out bench/results/quality-corpus.json
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ascii = @import("image_to_ascii");
 const ppm = @import("ppm_support");
 
@@ -21,9 +23,12 @@ const metrics = @import("metrics.zig");
 const reconstruct = @import("reconstruct.zig");
 
 const default_input = "testdata/color-bars.ppm";
+const default_slash_input = "testdata/slash-line.ppm";
 
 const Options = struct {
-    input_path: ?[]const u8 = default_input,
+    input_path: ?[]const u8 = null,
+    corpus_path: ?[]const u8 = null,
+    out_path: ?[]const u8 = null,
     width: u32 = 80,
     height: u32 = 40,
     mode: ascii.RenderMode = .partition,
@@ -35,6 +40,56 @@ const Options = struct {
     strategy: ascii.SampleStrategy = .auto,
     write_recon: ?[]const u8 = null,
     write_ref: ?[]const u8 = null,
+};
+
+const CorpusCase = struct {
+    name: []const u8,
+    file: []const u8,
+    width: u32,
+    height: u32,
+    mode: ascii.RenderMode,
+    partition: ascii.PartitionKind = .density_1x1,
+    color: ascii.ColorMode = .none,
+    fit: ascii.FitMode = .stretch,
+    dither: ascii.DitherMode = .none,
+    stat: ascii.ColorStat = .trimmed_mean,
+    strategy: ascii.SampleStrategy = .auto,
+    min_psnr_db: f64,
+    min_ssim: f64,
+    min_edge_correlation: f64,
+    slash_golden: bool = false,
+};
+
+const QualityResult = struct {
+    fixture_name: []const u8,
+    input_path: []const u8,
+    image_width: u32,
+    image_height: u32,
+    mode: ascii.RenderMode,
+    partition: ascii.PartitionKind,
+    color: ascii.ColorMode,
+    sampler_policy: ascii.SamplerPolicy,
+    output_columns: u32,
+    output_rows: u32,
+    compare_width: u32,
+    compare_height: u32,
+    mse: f64,
+    psnr_db: f64,
+    ssim: f64,
+    edge_correlation: f64,
+    slash_golden: bool,
+    slash_golden_pass: bool,
+    observed_codepoint: u21,
+};
+
+const corpus_cases = [_]CorpusCase{
+    .{ .name = "slash-glyph-structure", .file = "slash-line.ppm", .width = 1, .height = 1, .mode = .glyph_structure, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01, .slash_golden = true },
+    .{ .name = "checkerboard-braille", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .braille, .partition = .octant_2x4, .dither = .ordered_4x4, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
+    .{ .name = "thin-lines-quadrant", .file = "thin-lines.ppm", .width = 8, .height = 8, .mode = .partition, .partition = .quadrant_2x2, .min_psnr_db = 1.0, .min_ssim = 0.001, .min_edge_correlation = 0.5 },
+    .{ .name = "gradient-density", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .density, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.0 },
+    .{ .name = "color-bars-half-truecolor", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
+    .{ .name = "shape-glyph-tone", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .glyph_tone, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
+    .{ .name = "low-contrast-glyph-structure", .file = "low-contrast-edge.ppm", .width = 8, .height = 4, .mode = .glyph_structure, .min_psnr_db = 6.0, .min_ssim = 0.001, .min_edge_correlation = -0.1 },
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -71,7 +126,46 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options: Options) !void {
-    const path = options.input_path orelse return error.MissingInput;
+    if (options.corpus_path) |path| {
+        try runCorpus(writer, io, allocator, path, options.out_path);
+        return;
+    }
+
+    if (options.input_path) |path| {
+        const result = try evaluatePath(allocator, io, path, options);
+        try writeHumanReport(writer, result, options, path);
+        try writeSingleArtifacts(writer, io, allocator, options, path);
+        return;
+    }
+
+    try runDefaultSmoke(writer, io, allocator, options);
+}
+
+fn runDefaultSmoke(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options: Options) !void {
+    var color_options = options;
+    color_options.input_path = default_input;
+    const color_result = try evaluatePath(allocator, io, default_input, color_options);
+    try writeHumanReport(writer, color_result, color_options, default_input);
+
+    var slash_options = options;
+    slash_options.input_path = default_slash_input;
+    slash_options.width = 1;
+    slash_options.height = 1;
+    slash_options.mode = .glyph_structure;
+    slash_options.partition = .density_1x1;
+    slash_options.color = .none;
+    slash_options.fit = .stretch;
+    const slash_result = try evaluatePath(allocator, io, default_slash_input, slash_options);
+    if (!slash_result.slash_golden_pass) return error.SlashGoldenFailed;
+    try writer.print("slash golden : {u}\n", .{slash_result.observed_codepoint});
+}
+
+fn evaluatePath(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    options: Options,
+) !QualityResult {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024));
     const image = try ppm.decode(allocator, bytes);
 
@@ -79,7 +173,7 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
         .columns = options.width,
         .rows = options.height,
         .color = options.color,
-        .symbols = if (options.mode == .braille) .braille else .block_basic,
+        .symbols = symbolsForMode(options.mode),
     };
     const render_options = ascii.Options{
         .mode = options.mode,
@@ -89,6 +183,7 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
         .color_stat = options.stat,
         .sample_strategy = options.strategy,
     };
+    const sampler_policy = ascii.resolveSamplerPolicy(render_options, terminal, false);
 
     var frame = try ascii.renderToCells(allocator, image, terminal, render_options);
     defer frame.deinit(allocator);
@@ -107,6 +202,31 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
 
     const report = try metrics.compare(allocator, reference, recon);
 
+    const observed = if (frame.codepoints.len > 0) frame.codepoints[0] else 0;
+    return .{
+        .fixture_name = path,
+        .input_path = path,
+        .image_width = image.width,
+        .image_height = image.height,
+        .mode = options.mode,
+        .partition = options.partition,
+        .color = options.color,
+        .sampler_policy = sampler_policy,
+        .output_columns = frame.columns,
+        .output_rows = frame.rows,
+        .compare_width = report.width,
+        .compare_height = report.height,
+        .mse = report.mse,
+        .psnr_db = report.psnr_db,
+        .ssim = report.ssim,
+        .edge_correlation = report.edge_correlation,
+        .slash_golden = options.mode == .glyph_structure and options.width == 1 and options.height == 1,
+        .slash_golden_pass = observed == '/',
+        .observed_codepoint = observed,
+    };
+}
+
+fn writeHumanReport(writer: *std.Io.Writer, result: QualityResult, options: Options, path: []const u8) !void {
     try writer.print(
         \\source        : {s} ({d}x{d})
         \\render        : mode={s} partition={s} color={s} fit={s} dither={s} stat={s}
@@ -118,13 +238,52 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
         \\edge corr.    : {d:.4}
         \\
     , .{
-        path,                   image.width,                 image.height,
+        path,                   result.image_width,          result.image_height,
         @tagName(options.mode), @tagName(options.partition), @tagName(options.color),
         @tagName(options.fit),  @tagName(options.dither),    @tagName(options.stat),
-        frame.columns,          frame.rows,                  report.width,
-        report.height,          report.mse,                  report.psnr_db,
-        report.ssim,            report.edge_correlation,
+        result.output_columns,  result.output_rows,          result.compare_width,
+        result.compare_height,  result.mse,                  result.psnr_db,
+        result.ssim,            result.edge_correlation,
     });
+}
+
+fn writeSingleArtifacts(
+    writer: *std.Io.Writer,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    options: Options,
+    path: []const u8,
+) !void {
+    if (options.write_recon == null and options.write_ref == null) return;
+
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024));
+    const image = try ppm.decode(allocator, bytes);
+    const terminal = ascii.TerminalProfile{
+        .columns = options.width,
+        .rows = options.height,
+        .color = options.color,
+        .symbols = symbolsForMode(options.mode),
+    };
+    const render_options = ascii.Options{
+        .mode = options.mode,
+        .partition = options.partition,
+        .fit = options.fit,
+        .dither = options.dither,
+        .color_stat = options.stat,
+        .sample_strategy = options.strategy,
+    };
+    var frame = try ascii.renderToCells(allocator, image, terminal, render_options);
+    defer frame.deinit(allocator);
+    var recon = try reconstruct.reconstructForMode(allocator, frame, options.mode);
+    defer recon.deinit(allocator);
+    const background = common.Rgb{
+        .r = terminal.background.r,
+        .g = terminal.background.g,
+        .b = terminal.background.b,
+    };
+    const crop = common.cropRectFor(image, terminal, options.fit);
+    var reference = try common.resizeReference(allocator, image, background, crop, recon.width, recon.height);
+    defer reference.deinit(allocator);
 
     if (options.write_recon) |p| {
         try common.writePpm(io, allocator, p, recon);
@@ -136,6 +295,194 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
     }
 }
 
+fn runCorpus(
+    writer: *std.Io.Writer,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    corpus_path: []const u8,
+    out_path: ?[]const u8,
+) !void {
+    var results: [corpus_cases.len]QualityResult = undefined;
+    var failures: usize = 0;
+
+    for (corpus_cases, 0..) |case, idx| {
+        const path = try std.fs.path.join(allocator, &.{ corpus_path, case.file });
+        const options = optionsForCase(case);
+        var result = try evaluatePath(allocator, io, path, options);
+        result.fixture_name = case.name;
+        results[idx] = result;
+
+        const passed = validateCorpusResult(result, case);
+        if (!passed) {
+            failures += 1;
+            try writeThresholdFailure(writer, result, case);
+        }
+
+        try writer.print(
+            "{s}: mode={s} color={s} policy={s} psnr={d:.3} ssim={d:.4} edge={d:.4} slash={s}\n",
+            .{
+                case.name,
+                @tagName(result.mode),
+                @tagName(result.color),
+                @tagName(result.sampler_policy),
+                result.psnr_db,
+                result.ssim,
+                result.edge_correlation,
+                if (!case.slash_golden) "n/a" else if (result.slash_golden_pass) "pass" else "fail",
+            },
+        );
+    }
+
+    if (out_path) |path| {
+        try writeCorpusJson(io, path, results[0..]);
+        try writer.print("wrote quality corpus -> {s}\n", .{path});
+    }
+
+    if (failures > 0) return error.QualityThresholdFailed;
+}
+
+fn optionsForCase(case: CorpusCase) Options {
+    return .{
+        .width = case.width,
+        .height = case.height,
+        .mode = case.mode,
+        .partition = case.partition,
+        .color = case.color,
+        .fit = case.fit,
+        .dither = case.dither,
+        .stat = case.stat,
+        .strategy = case.strategy,
+    };
+}
+
+fn symbolsForMode(mode: ascii.RenderMode) ascii.TerminalSymbols {
+    return switch (mode) {
+        .braille => .braille,
+        .glyph_tone, .glyph_structure => .glyphs,
+        else => .block_basic,
+    };
+}
+
+fn validateCorpusResult(result: QualityResult, case: CorpusCase) bool {
+    if (!std.math.isFinite(result.mse)) return false;
+    if (!std.math.isFinite(result.psnr_db)) return false;
+    if (!std.math.isFinite(result.ssim)) return false;
+    if (!std.math.isFinite(result.edge_correlation)) return false;
+    if (case.slash_golden and !result.slash_golden_pass) return false;
+    if (result.psnr_db < case.min_psnr_db) return false;
+    if (result.ssim < case.min_ssim) return false;
+    if (result.edge_correlation < case.min_edge_correlation) return false;
+    return true;
+}
+
+fn writeThresholdFailure(writer: *std.Io.Writer, result: QualityResult, case: CorpusCase) !void {
+    if (!std.math.isFinite(result.mse)) try writer.print("  fail: {s} mse is not finite\n", .{case.name});
+    if (!std.math.isFinite(result.psnr_db)) try writer.print("  fail: {s} psnr is not finite\n", .{case.name});
+    if (!std.math.isFinite(result.ssim)) try writer.print("  fail: {s} ssim is not finite\n", .{case.name});
+    if (!std.math.isFinite(result.edge_correlation)) try writer.print("  fail: {s} edge correlation is not finite\n", .{case.name});
+    if (case.slash_golden and !result.slash_golden_pass) {
+        try writer.print("  fail: {s} expected slash '/' but observed codepoint {d}\n", .{ case.name, result.observed_codepoint });
+    }
+    if (result.psnr_db < case.min_psnr_db) {
+        try writer.print("  fail: {s} psnr {d:.3} below {d:.3}\n", .{ case.name, result.psnr_db, case.min_psnr_db });
+    }
+    if (result.ssim < case.min_ssim) {
+        try writer.print("  fail: {s} ssim {d:.4} below {d:.4}\n", .{ case.name, result.ssim, case.min_ssim });
+    }
+    if (result.edge_correlation < case.min_edge_correlation) {
+        try writer.print("  fail: {s} edge {d:.4} below {d:.4}\n", .{ case.name, result.edge_correlation, case.min_edge_correlation });
+    }
+}
+
+fn writeCorpusJson(io: std.Io, out_path: []const u8, results: []const QualityResult) !void {
+    if (std.fs.path.dirname(out_path)) |dir| {
+        if (dir.len > 0) try std.Io.Dir.createDirPath(.cwd(), io, dir);
+    }
+
+    const file = try std.Io.Dir.createFile(.cwd(), io, out_path, .{ .truncate = true });
+    defer file.close(io);
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer: std.Io.File.Writer = .init(file, io, &file_buffer);
+    const writer = &file_writer.interface;
+
+    try writer.print(
+        \\{{
+        \\  "schema_version": 1,
+        \\  "zig_version": "{s}",
+        \\  "target": {{
+        \\    "os": "{s}",
+        \\    "cpu_arch": "{s}"
+        \\  }},
+        \\  "corpus": {{
+        \\    "name": "quality-corpus",
+        \\    "cases": {d}
+        \\  }},
+        \\  "results": [
+        \\
+    , .{
+        builtin.zig_version_string,
+        @tagName(builtin.target.os.tag),
+        @tagName(builtin.target.cpu.arch),
+        results.len,
+    });
+
+    for (results, 0..) |result, idx| {
+        if (idx != 0) try writer.writeAll(",\n");
+        try writeJsonResult(writer, result);
+    }
+
+    try writer.writeAll(
+        \\
+        \\  ]
+        \\}
+        \\
+    );
+    try writer.flush();
+}
+
+fn writeJsonResult(writer: *std.Io.Writer, result: QualityResult) !void {
+    try writer.print(
+        \\    {{
+        \\      "fixture_name": "{s}",
+        \\      "input_path": "{s}",
+        \\      "mode": "{s}",
+        \\      "partition": "{s}",
+        \\      "color_mode": "{s}",
+        \\      "sampler_policy": "{s}",
+        \\      "output_columns": {d},
+        \\      "output_rows": {d},
+        \\      "compare_width": {d},
+        \\      "compare_height": {d},
+        \\      "mse": {d:.6},
+        \\      "psnr_db": {d:.6},
+        \\      "ssim": {d:.6},
+        \\      "edge_correlation": {d:.6},
+        \\      "slash_golden": {s},
+        \\      "slash_golden_pass": {s},
+        \\      "observed_codepoint": {d}
+        \\    }}
+    , .{
+        result.fixture_name,
+        result.input_path,
+        @tagName(result.mode),
+        @tagName(result.partition),
+        @tagName(result.color),
+        @tagName(result.sampler_policy),
+        result.output_columns,
+        result.output_rows,
+        result.compare_width,
+        result.compare_height,
+        result.mse,
+        result.psnr_db,
+        result.ssim,
+        result.edge_correlation,
+        if (result.slash_golden) "true" else "false",
+        if (result.slash_golden_pass) "true" else "false",
+        result.observed_codepoint,
+    });
+}
+
 fn parseArgs(args: []const []const u8) !Options {
     var options = Options{};
     var i: usize = 1;
@@ -143,6 +490,10 @@ fn parseArgs(args: []const []const u8) !Options {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--input")) {
             options.input_path = try value(args, &i);
+        } else if (std.mem.eql(u8, arg, "--corpus")) {
+            options.corpus_path = try value(args, &i);
+        } else if (std.mem.eql(u8, arg, "--out")) {
+            options.out_path = try value(args, &i);
         } else if (std.mem.eql(u8, arg, "--width")) {
             options.width = try parsePositive(try value(args, &i));
         } else if (std.mem.eql(u8, arg, "--height")) {
@@ -244,9 +595,12 @@ fn argsContain(args: []const []const u8, needle: []const u8) bool {
 fn writeUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\usage: render_compare [--input path.ppm] [options]
+        \\       render_compare --corpus testdata/corpus --out bench/results/quality-corpus.json
         \\
         \\options:
-        \\  --input path.ppm|path.pam   input fixture (default testdata/color-bars.ppm)
+        \\  --input path.ppm|path.pam   input fixture
+        \\  --corpus dir                run checked-in quality corpus fixtures
+        \\  --out path.json             write corpus JSON artifact
         \\  --width N                   output columns (default 80)
         \\  --height N                  output rows (default 40)
         \\  --mode density|partition|braille|glyph-tone|glyph-structure
