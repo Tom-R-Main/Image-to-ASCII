@@ -1,10 +1,8 @@
 # Cell Render
 
-Zig-first terminal image rendering for libraries and TUIs.
+Zig-first terminal visual rendering for images, diagrams, and TUI surfaces.
 
-This project is not a conventional "decode an image file and print ASCII" app. The core library accepts caller-owned raw
-pixels and returns terminal-native cells or streams ANSI output through a caller-supplied writer. Image decoding,
-terminal probing, and stdout handling belong to the CLI or adapter layer — not to core.
+Cell Render turns visual inputs into terminal-native cells: raw images, semantic diagrams, and future agent/TUI visualization primitives. The core library accepts caller-owned data and returns `Frame` output or ANSI through caller-supplied writers. Decoding, terminal probing, layout ownership, and app lifecycle stay outside core
 
 ```text
 raw RGBA -> aspect-correct sampler -> density / block / glyph renderer -> Frame / coalesced ANSI writer
