@@ -42,7 +42,7 @@ pub fn renderGraph(
 
     // 1. Edge lines first; node boxes drawn over them sit only in clear cells.
     for (lay.edges) |edge| {
-        try drawPolyline(gpa, &canvas, edge.points, line_opts);
+        try drawPolyline(&canvas, edge.points, line_opts);
     }
 
     // 2. Node boxes and their labels.
@@ -83,12 +83,14 @@ fn toCanvasRect(r: layered.Rect) cc.Rect {
     return .{ .x = r.x, .y = r.y, .width = r.width, .height = r.height };
 }
 
-fn drawPolyline(gpa: std.mem.Allocator, canvas: *cc.CellCanvas, points: []const layered.Point, opts: cc.LineOptions) !void {
+fn drawPolyline(canvas: *cc.CellCanvas, points: []const layered.Point, opts: cc.LineOptions) !void {
     if (points.len < 2) return;
-    const cpts = try gpa.alloc(cc.Point, points.len);
-    defer gpa.free(cpts);
-    for (points, 0..) |p, i| cpts[i] = .{ .x = p.x, .y = p.y };
-    try canvas.drawPolyline(cpts, opts);
+    var i: usize = 1;
+    while (i < points.len) : (i += 1) {
+        const a = points[i - 1];
+        const b = points[i];
+        try canvas.drawLine(.{ .x = a.x, .y = a.y }, .{ .x = b.x, .y = b.y }, opts);
+    }
 }
 
 fn drawCenteredLabel(canvas: *cc.CellCanvas, rect: layered.Rect, label: []const u8, opts: cc.TextOptions) !void {

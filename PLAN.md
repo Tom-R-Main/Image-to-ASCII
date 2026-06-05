@@ -116,7 +116,19 @@ Status: implemented (`src/diagram/layout/layered.zig`, `src/diagram/render/graph
 Output is overlap-free by construction and deterministic; it is not
 crossing-minimal. Golden fixtures: `testdata/mermaid/flowchart/*.{mmd,golden.txt}`.
 Deferred: distinct node-shape rendering, dotted/thick stroke glyphs, off-line edge
-labels, a CLI `mermaid` subcommand, and a diagram benchmark lab.
+labels, a CLI `mermaid` subcommand, and reusable diagram workspaces.
+
+Diagram benchmark artifacts now exist:
+
+- `bench/results/diagram-baseline.json`
+- `bench/results/diagram-optimized.json`
+
+The first optimization pass eliminated per-edge heap allocation in the renderer
+by drawing routed edge segments directly into `CellCanvas`, then pre-sized known
+layout/rank/chaining structures. The next diagram performance hypothesis should
+target reusable diagram workspaces or parsing/layout ownership, because the
+remaining allocations are now mostly durable result ownership plus canvas/frame
+output.
 
 ### Slice 4: Sequence Diagram Subset
 
@@ -833,7 +845,8 @@ Must include:
    and rejects unsupported syntax clearly.
 2. Add a layered graph layout and render the first flowchart subset through
    `CellCanvas`.
-3. Add diagram golden fixtures and `bench/results/diagram-baseline.json` once
-   parse/layout/render stages exist.
-4. Continue image glyph-structure scoring only after profiling identifies
+3. Add a CLI `mermaid` subcommand for visual smoke testing actual `.mmd` files.
+4. Add a diagram workspace/reuse API only if repeated Mermaid/TUI rendering
+   becomes the next measured bottleneck.
+5. Continue image glyph-structure scoring only after profiling identifies
    candidate scoring, not sampling, as the bottleneck.

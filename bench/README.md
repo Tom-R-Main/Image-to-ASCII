@@ -50,13 +50,14 @@ The JSON artifact records:
 
 ## Diagram Benchmarks
 
-Diagram rendering will get a separate artifact once the Mermaid parser and layout layers exist:
+Diagram rendering has a separate parse/layout/render benchmark path:
 
-```text
-bench/results/diagram-baseline.json
+```sh
+zig build -Doptimize=ReleaseFast bench -- --diagram --out bench/results/diagram-baseline.json
+zig build -Doptimize=ReleaseFast bench -- --diagram --out bench/results/diagram-optimized.json
 ```
 
-Planned rows:
+Rows:
 
 - `flowchart-small-parse`
 - `flowchart-small-layout`
@@ -64,6 +65,9 @@ Planned rows:
 - `flowchart-medium-parse`
 - `flowchart-medium-layout`
 - `flowchart-medium-render`
+
+Planned later rows:
+
 - `sequence-small-parse`
 - `sequence-small-layout`
 - `sequence-small-render`
@@ -72,9 +76,20 @@ Planned rows:
 - `sequence-long-render`
 - `ansi-diff-diagram-small-change`
 
-Track input bytes, line count, node count, edge/message count, output columns/rows, parse/layout/render nanoseconds,
-ANSI bytes, allocations, and steady-state allocations with reusable workspace/canvas state. `CellCanvas` itself is now
-covered by unit tests, but it does not write a benchmark artifact until there is a parser/layout workload to measure.
+The JSON artifact tracks input bytes, line count, node count, edge count, output columns/rows, iterations, mean/median/p95
+nanoseconds, ns/node, allocation count, allocated bytes, and ANSI bytes for render rows.
+
+The first diagram optimization pass tested two falsifiable hypotheses:
+
+- routed edge rendering was doing avoidable per-edge heap work by copying layout points into canvas points,
+- layout was doing avoidable rank/chaining growth allocations where final or upper-bound sizes were already known.
+
+`bench/results/diagram-baseline.json` records the pre-change measurement, and `bench/results/diagram-optimized.json`
+records direct segment drawing plus pre-sized layout/rank/chaining structures. In this local ReleaseFast run,
+`flowchart-medium-layout` improved from 27.8us to 20.6us median and from 12 to 10 allocations; `flowchart-medium-render`
+improved from 73.7us to 25.4us median and from 28 to 13 allocations. `flowchart-small-layout` improved from 33.2us to
+14.8us median and from 9 to 8 allocations; `flowchart-small-render` improved from 34.6us to 18.6us median and from 13 to
+11 allocations.
 
 ## Current ReleaseFast Baseline
 

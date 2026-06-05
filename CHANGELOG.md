@@ -39,6 +39,17 @@
   limitations: all node shapes render as boxes; dotted/thick strokes render with
   the same light glyphs; edge labels sit on the routing line; self-loops render
   as a small stub.
+- Added a diagram benchmark lab (`zig build bench -- --diagram --out
+  bench/results/diagram-optimized.json`) with parse/layout/render rows for small
+  and medium flowcharts. The optimization pass eliminated the renderer's
+  per-edge polyline conversion allocation by drawing routed edge segments
+  directly into `CellCanvas`, then pre-sized known layout/rank/chaining
+  structures. Against `bench/results/diagram-baseline.json`, the medium layout
+  row drops from 12 to 10 allocations and from 27.8us to 20.6us median; medium
+  render drops from 28 to 13 allocations and from 73.7us to 25.4us median. The
+  small layout row drops from 9 to 8 allocations and from 33.2us to 14.8us
+  median; small render drops from 13 to 11 allocations and from 34.6us to 18.6us
+  median in this local ReleaseFast run.
 
 ### CLI and Tooling
 

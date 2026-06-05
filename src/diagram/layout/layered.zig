@@ -169,6 +169,7 @@ const Engine = struct {
 
         const reversed = try self.breakCycles();
         try self.assignRanks(reversed);
+        try self.lnodes.ensureTotalCapacity(self.arena, n + self.dummyCount());
         try self.buildLNodes();
         try self.buildChains();
         try self.bucketRanks();
@@ -276,6 +277,18 @@ const Engine = struct {
         self.max_rank = maxr;
     }
 
+    fn dummyCount(self: *Engine) usize {
+        var count: usize = 0;
+        for (self.diagram.edges) |e| {
+            if (e.from == e.to) continue;
+            const a = self.rank_of[e.from];
+            const b = self.rank_of[e.to];
+            const span = if (a > b) a - b else b - a;
+            if (span > 1) count += span - 1;
+        }
+        return count;
+    }
+
     // -- layout nodes -------------------------------------------------------
 
     fn buildLNodes(self: *Engine) LayoutError!void {
@@ -319,16 +332,18 @@ const Engine = struct {
             if (e.from == e.to) continue; // self-loops handled at routing time.
             const r0: i64 = self.rank_of[e.from];
             const r1: i64 = self.rank_of[e.to];
-            try self.chains[i].append(self.arena, e.from);
+            const span: usize = @intCast(if (r0 > r1) r0 - r1 else r1 - r0);
+            try self.chains[i].ensureTotalCapacity(self.arena, span + 1);
+            self.chains[i].appendAssumeCapacity(e.from);
             if (r1 != r0) {
                 const step: i64 = if (r1 > r0) 1 else -1;
                 var r = r0 + step;
                 while (r != r1) : (r += step) {
                     const d = try self.addDummy(@intCast(r));
-                    try self.chains[i].append(self.arena, d);
+                    self.chains[i].appendAssumeCapacity(d);
                 }
             }
-            try self.chains[i].append(self.arena, e.to);
+            self.chains[i].appendAssumeCapacity(e.to);
         }
 
         // Record adjacency between consecutive chain members (one rank apart).
@@ -350,8 +365,16 @@ const Engine = struct {
     fn bucketRanks(self: *Engine) LayoutError!void {
         try self.ranks.resize(self.arena, self.max_rank + 1);
         for (self.ranks.items) |*r| r.* = .empty;
+        const rank_counts = try self.scratch.alloc(usize, self.ranks.items.len);
+        @memset(rank_counts, 0);
+        for (self.lnodes.items) |ln| {
+            rank_counts[ln.rank] += 1;
+        }
+        for (self.ranks.items, 0..) |*bucket, i| {
+            try bucket.ensureTotalCapacity(self.arena, rank_counts[i]);
+        }
         for (self.lnodes.items, 0..) |ln, i| {
-            try self.ranks.items[ln.rank].append(self.arena, i);
+            self.ranks.items[ln.rank].appendAssumeCapacity(i);
         }
         self.reindexOrders();
     }
@@ -504,12 +527,13 @@ const Engine = struct {
 
     fn routeEdges(self: *Engine) LayoutError![]RoutedEdge {
         var out = std.ArrayList(RoutedEdge).empty;
+        try out.ensureTotalCapacity(self.arena, self.diagram.edges.len);
         for (self.diagram.edges, 0..) |e, i| {
             if (e.from == e.to) {
-                try out.append(self.arena, try self.routeSelfLoop(i, e));
+                out.appendAssumeCapacity(try self.routeSelfLoop(i, e));
                 continue;
             }
-            try out.append(self.arena, try self.routeChain(i, e));
+            out.appendAssumeCapacity(try self.routeChain(i, e));
         }
         return out.toOwnedSlice(self.arena);
     }
@@ -517,6 +541,7 @@ const Engine = struct {
     fn routeChain(self: *Engine, edge_index: usize, e: ir.Edge) LayoutError!RoutedEdge {
         const chain = self.chains[edge_index].items;
         var pts = std.ArrayList(Point).empty;
+        try pts.ensureTotalCapacity(self.arena, chain.len * 4);
 
         var k: usize = 1;
         while (k < chain.len) : (k += 1) {
@@ -588,6 +613,7 @@ const Engine = struct {
         const cx = r.x + @divTrunc(@as(i32, @intCast(r.width)), 2);
 
         var pts = std.ArrayList(Point).empty;
+        try pts.ensureTotalCapacity(self.arena, 4);
         try pushPoint(self.arena, &pts, .{ .x = right - 1, .y = bottom_row });
         try pushPoint(self.arena, &pts, .{ .x = right, .y = bottom_row });
         try pushPoint(self.arena, &pts, .{ .x = right, .y = below });
@@ -652,10 +678,11 @@ const Engine = struct {
 
     fn collectNodes(self: *Engine) LayoutError![]LaidOutNode {
         var out = std.ArrayList(LaidOutNode).empty;
+        try out.ensureTotalCapacity(self.arena, self.diagram.nodes.len);
         for (self.lnodes.items) |ln| {
             if (ln.kind != .real) continue;
             const node = self.diagram.nodes[ln.real];
-            try out.append(self.arena, .{
+            out.appendAssumeCapacity(.{
                 .node = ln.real,
                 .label = try self.arena.dupe(u8, node.label),
                 .shape = node.shape,

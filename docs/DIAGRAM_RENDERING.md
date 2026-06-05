@@ -114,6 +114,18 @@ box-drawing glyphs; edge labels sit on the routing line rather than beside it;
 self-loops render as a small stub. Golden fixtures live in
 `testdata/mermaid/flowchart/` and are checked by `zig build test`.
 
+Diagram performance is tracked separately from image rendering:
+
+```sh
+zig build -Doptimize=ReleaseFast bench -- --diagram --out bench/results/diagram-optimized.json
+```
+
+The benchmark records parse/layout/render rows, graph size, output dimensions,
+timings, allocation counts, allocated bytes, and render ANSI bytes.
+`bench/results/diagram-baseline.json` captures the pre-optimization renderer;
+`bench/results/diagram-optimized.json` captures direct edge-segment drawing plus
+pre-sized layout/rank/chaining structures.
+
 ## Mermaid Compatibility Promise
 
 Do not claim full Mermaid compatibility initially. The correct product claim is:

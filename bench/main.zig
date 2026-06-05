@@ -10,6 +10,7 @@ const reconstruct = quality_tools.reconstruct;
 
 const Synthetic = enum { gradient, checkerboard, color_mix };
 const DiffScenario = enum { none, noop, single_cell, small_run, one_row, full };
+const DiagramBenchKind = enum { parse, layout, render };
 const BenchKind = enum {
     render,
     render_prepared,
@@ -105,6 +106,63 @@ const iterations: u64 = 200;
 
 const Args = struct {
     out_path: ?[]const u8 = null,
+    diagram: bool = false,
+};
+
+const DiagramBenchCase = struct {
+    name: []const u8,
+    kind: DiagramBenchKind,
+    source: []const u8,
+};
+
+const DiagramBenchResult = struct {
+    name: []const u8,
+    kind: DiagramBenchKind,
+    input_bytes: usize,
+    line_count: usize,
+    node_count: usize,
+    edge_count: usize,
+    output_columns: u32,
+    output_rows: u32,
+    iterations: u64,
+    ns_per_iter: u64,
+    median_ns: u64,
+    p95_ns: u64,
+    ns_per_node: u64,
+    allocations: usize,
+    bytes_allocated: usize,
+    ansi_bytes: u64,
+};
+
+const flowchart_small =
+    \\flowchart LR
+    \\    A[Start] --> B[End]
+;
+
+const flowchart_medium =
+    \\flowchart TD
+    \\    A[Plan] --> B{Ready}
+    \\    B -->|yes| C[Parse]
+    \\    B -->|no| D[Revise]
+    \\    D --> B
+    \\    C --> E[Layout]
+    \\    E --> F[Render]
+    \\    F --> G[Diff]
+    \\    F --> H[OpenTUI]
+    \\    G --> I[Terminal]
+    \\    H --> I
+    \\    I --> J[Review]
+    \\    J --> K[Commit]
+    \\    K --> L[Ship]
+;
+
+const diagram_cases = [_]DiagramBenchCase{
+    .{ .name = "flowchart-small-parse", .kind = .parse, .source = flowchart_small },
+    .{ .name = "flowchart-small-layout", .kind = .layout, .source = flowchart_small },
+    .{ .name = "flowchart-small-render", .kind = .render, .source = flowchart_small },
+    .{ .name = "flowchart-medium-parse", .kind = .parse, .source = flowchart_medium },
+    .{ .name = "flowchart-medium-layout", .kind = .layout, .source = flowchart_medium },
+    .{ .name = "flowchart-medium-render", .kind = .render, .source = flowchart_medium },
 };
 
 const RealImageSmokeCase = struct {
@@ -151,6 +209,28 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa_state.allocator();
 
     const args = parseArgs(init.minimal.args);
+    const run_diagram = args.diagram or if (args.out_path) |path|
+        std.mem.startsWith(u8, std.fs.path.basename(path), "diagram-")
+    else
+        false;
+
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), init.io, &stdout_buffer);
+    const stdout = &stdout_file_writer.interface;
+
+    if (run_diagram) {
+        const ansi_buf = try allocator.alloc(u8, 1 << 20);
+        defer allocator.free(ansi_buf);
+        var results: [diagram_cases.len]DiagramBenchResult = undefined;
+        try stdout.writeAll("case,stage,input_bytes,lines,nodes,edges,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_node,allocations,bytes_allocated,ansi_bytes\n");
+        for (diagram_cases, 0..) |bench_case, idx| {
+            results[idx] = try runDiagramCase(init.io, allocator, ansi_buf, bench_case);
+            try writeDiagramCsvRow(stdout, results[idx]);
+        }
+        try stdout.flush();
+        if (args.out_path) |path| try writeDiagramJsonResults(init.io, path, results[0..]);
+        return;
+    }
 
     const gradient = try makeImage(allocator, .gradient, in_w, in_h);
     defer allocator.free(gradient.pixels);
@@ -161,10 +241,6 @@ pub fn main(init: std.process.Init) !void {
 
     const ansi_buf = try allocator.alloc(u8, 1 << 20);
     defer allocator.free(ansi_buf);
-
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), init.io, &stdout_buffer);
-    const stdout = &stdout_file_writer.interface;
 
     var results: [cases.len]BenchResult = undefined;
 
@@ -199,12 +275,132 @@ fn parseArgs(process_args: std.process.Args) Args {
             parsed.out_path = it.next() orelse std.debug.panic("missing path after --out", .{});
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
             parsed.out_path = arg["--out=".len..];
+        } else if (std.mem.eql(u8, arg, "--diagram")) {
+            parsed.diagram = true;
         } else {
             std.debug.panic("unknown benchmark argument: {s}", .{arg});
         }
     }
 
     return parsed;
+}
+
+fn runDiagramCase(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    ansi_buf: []u8,
+    bench_case: DiagramBenchCase,
+) !DiagramBenchResult {
+    const source = bench_case.source;
+    const shape = try diagramShape(allocator, source);
+    const allocation = try countDiagramAllocations(allocator, ansi_buf, bench_case);
+
+    const warm_bytes = try runDiagramOnce(allocator, ansi_buf, bench_case);
+    std.mem.doNotOptimizeAway(warm_bytes);
+
+    var timings: [iterations]u64 = undefined;
+    var total_ns: u64 = 0;
+    var i: u64 = 0;
+    while (i < iterations) : (i += 1) {
+        const start = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        const bytes = try runDiagramOnce(allocator, ansi_buf, bench_case);
+        const end = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        std.mem.doNotOptimizeAway(bytes);
+        const elapsed: u64 = @intCast(end - start);
+        timings[@intCast(i)] = elapsed;
+        total_ns += elapsed;
+    }
+
+    insertionSortU64(&timings);
+
+    const ns_per_iter = total_ns / iterations;
+    return .{
+        .name = bench_case.name,
+        .kind = bench_case.kind,
+        .input_bytes = source.len,
+        .line_count = lineCount(source),
+        .node_count = shape.nodes,
+        .edge_count = shape.edges,
+        .output_columns = shape.columns,
+        .output_rows = shape.rows,
+        .iterations = iterations,
+        .ns_per_iter = ns_per_iter,
+        .median_ns = timings[timings.len / 2],
+        .p95_ns = timings[(timings.len * 95 + 99) / 100 - 1],
+        .ns_per_node = if (shape.nodes == 0) 0 else ns_per_iter / shape.nodes,
+        .allocations = allocation.allocations,
+        .bytes_allocated = allocation.bytes,
+        .ansi_bytes = allocation.ansi_bytes,
+    };
+}
+
+fn runDiagramOnce(
+    allocator: std.mem.Allocator,
+    ansi_buf: []u8,
+    bench_case: DiagramBenchCase,
+) !u64 {
+    var diagnostic: ?ascii.MermaidError = null;
+    switch (bench_case.kind) {
+        .parse => {
+            var parsed = try ascii.parseFlowchart(allocator, bench_case.source, &diagnostic);
+            defer parsed.deinit();
+            std.mem.doNotOptimizeAway(parsed.diagram.nodes.len);
+            return 0;
+        },
+        .layout => {
+            var parsed = try ascii.parseFlowchart(allocator, bench_case.source, &diagnostic);
+            defer parsed.deinit();
+            var layout = try ascii.layoutFlowchart(allocator, parsed.diagram, .{});
+            defer layout.deinit();
+            std.mem.doNotOptimizeAway(layout.nodes.len);
+            return 0;
+        },
+        .render => {
+            var frame = try ascii.renderMermaidFlowchart(allocator, bench_case.source, .{ .glyph_set = .ascii, .color = .none }, &diagnostic);
+            defer frame.deinit(allocator);
+            var fixed: std.Io.Writer = .fixed(ansi_buf);
+            try ascii.renderFrameToWriter(&fixed, frame);
+            return fixed.end;
+        },
+    }
+}
+
+fn countDiagramAllocations(
+    allocator: std.mem.Allocator,
+    ansi_buf: []u8,
+    bench_case: DiagramBenchCase,
+) !struct { allocations: usize, bytes: usize, ansi_bytes: u64 } {
+    var counting = BenchCountingAllocator{ .child = allocator };
+    const counting_allocator = counting.allocator();
+    const ansi_bytes = try runDiagramOnce(counting_allocator, ansi_buf, bench_case);
+    return .{ .allocations = counting.alloc_count, .bytes = counting.bytes_allocated, .ansi_bytes = ansi_bytes };
+}
+
+fn diagramShape(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+) !struct { nodes: usize, edges: usize, columns: u32, rows: u32 } {
+    var diagnostic: ?ascii.MermaidError = null;
+    var parsed = try ascii.parseFlowchart(allocator, source, &diagnostic);
+    defer parsed.deinit();
+    var layout = try ascii.layoutFlowchart(allocator, parsed.diagram, .{});
+    defer layout.deinit();
+    return .{
+        .nodes = parsed.diagram.nodes.len,
+        .edges = parsed.diagram.edges.len,
+        .columns = layout.columns,
+        .rows = layout.rows,
+    };
+}
+
+fn lineCount(source: []const u8) usize {
+    if (source.len == 0) return 0;
+    var count: usize = 1;
+    for (source) |c| {
+        if (c == '\n') count += 1;
+    }
+    if (source[source.len - 1] == '\n') count -= 1;
+    return count;
 }
 
 fn runCase(
@@ -657,6 +853,27 @@ fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
     });
 }
 
+fn writeDiagramCsvRow(writer: *std.Io.Writer, result: DiagramBenchResult) !void {
+    try writer.print("{s},{s},{d},{d},{d},{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+        result.name,
+        @tagName(result.kind),
+        result.input_bytes,
+        result.line_count,
+        result.node_count,
+        result.edge_count,
+        result.output_columns,
+        result.output_rows,
+        result.iterations,
+        result.ns_per_iter,
+        result.median_ns,
+        result.p95_ns,
+        result.ns_per_node,
+        result.allocations,
+        result.bytes_allocated,
+        result.ansi_bytes,
+    });
+}
+
 fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResult) !void {
     if (std.fs.path.dirname(out_path)) |dir| {
         if (dir.len > 0) try std.Io.Dir.createDirPath(.cwd(), io, dir);
@@ -710,6 +927,93 @@ fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResu
         \\
     );
     try writer.flush();
+}
+
+fn writeDiagramJsonResults(io: std.Io, out_path: []const u8, results: []const DiagramBenchResult) !void {
+    if (std.fs.path.dirname(out_path)) |dir| {
+        if (dir.len > 0) try std.Io.Dir.createDirPath(.cwd(), io, dir);
+    }
+
+    const file = try std.Io.Dir.createFile(.cwd(), io, out_path, .{ .truncate = true });
+    defer file.close(io);
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer: std.Io.File.Writer = .init(file, io, &file_buffer);
+    const writer = &file_writer.interface;
+
+    try writer.print(
+        \\{{
+        \\  "schema_version": 1,
+        \\  "zig_version": "{s}",
+        \\  "target": {{
+        \\    "os": "{s}",
+        \\    "cpu_arch": "{s}"
+        \\  }},
+        \\  "benchmark": {{
+        \\    "name": "diagram",
+        \\    "iterations": {d}
+        \\  }},
+        \\  "results": [
+        \\
+    , .{
+        builtin.zig_version_string,
+        @tagName(builtin.target.os.tag),
+        @tagName(builtin.target.cpu.arch),
+        iterations,
+    });
+
+    for (results, 0..) |result, idx| {
+        if (idx != 0) try writer.writeAll(",\n");
+        try writeDiagramJsonResult(writer, result);
+    }
+
+    try writer.writeAll(
+        \\
+        \\  ]
+        \\}
+        \\
+    );
+    try writer.flush();
+}
+
+fn writeDiagramJsonResult(writer: *std.Io.Writer, result: DiagramBenchResult) !void {
+    try writer.print(
+        \\    {{
+        \\      "case": "{s}",
+        \\      "stage": "{s}",
+        \\      "input_bytes": {d},
+        \\      "line_count": {d},
+        \\      "node_count": {d},
+        \\      "edge_count": {d},
+        \\      "output_columns": {d},
+        \\      "output_rows": {d},
+        \\      "iterations": {d},
+        \\      "ns_per_iter": {d},
+        \\      "median_ns": {d},
+        \\      "p95_ns": {d},
+        \\      "ns_per_node": {d},
+        \\      "allocations": {d},
+        \\      "bytes_allocated": {d},
+        \\      "ansi_bytes": {d}
+        \\    }}
+    , .{
+        result.name,
+        @tagName(result.kind),
+        result.input_bytes,
+        result.line_count,
+        result.node_count,
+        result.edge_count,
+        result.output_columns,
+        result.output_rows,
+        result.iterations,
+        result.ns_per_iter,
+        result.median_ns,
+        result.p95_ns,
+        result.ns_per_node,
+        result.allocations,
+        result.bytes_allocated,
+        result.ansi_bytes,
+    });
 }
 
 fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
