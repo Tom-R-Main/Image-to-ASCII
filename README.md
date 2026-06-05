@@ -12,7 +12,7 @@ raw RGBA -> aspect-correct sampler -> density / block / glyph renderer -> Frame 
 
 The durable product is a small, embeddable renderer for TUI apps, with Siftable as the first integration target.
 
-## Demo
+## Demo — Do I look like I know what a JPEG is?
 
 ![reference vs. quadrant-truecolor reconstruction](docs/hank-comparison.png)
 
