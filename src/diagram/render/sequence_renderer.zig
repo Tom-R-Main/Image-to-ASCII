@@ -16,7 +16,10 @@ pub const SequenceRenderOptions = struct {
     participant_fg: core.Rgb8 = .{ .r = 235, .g = 235, .b = 235 },
     participant_bg: core.Rgb8 = .{ .r = 0, .g = 0, .b = 0 },
     lifeline_fg: core.Rgb8 = .{ .r = 110, .g = 110, .b = 120 },
+    activation_fg: core.Rgb8 = .{ .r = 200, .g = 200, .b = 210 },
     message_fg: core.Rgb8 = .{ .r = 150, .g = 180, .b = 220 },
+    note_fg: core.Rgb8 = .{ .r = 30, .g = 30, .b = 30 },
+    note_bg: core.Rgb8 = .{ .r = 220, .g = 205, .b = 140 },
     bg: core.Rgb8 = .{ .r = 0, .g = 0, .b = 0 },
 };
 
@@ -43,20 +46,38 @@ pub fn renderSequence(
     const box_opts: cc.BoxOptions = .{ .glyph_set = options.glyph_set, .fg = options.participant_fg, .bg = options.bg };
     const participant_text: cc.TextOptions = .{ .fg = options.participant_fg, .bg = options.bg };
     const message_text: cc.TextOptions = .{ .fg = options.message_fg, .bg = options.bg };
+    const activation_opts: cc.LineOptions = .{
+        .glyph_set = options.glyph_set,
+        .stroke = .heavy,
+        .fg = options.activation_fg,
+        .bg = options.bg,
+    };
+    const note_box: cc.BoxOptions = .{ .glyph_set = options.glyph_set, .fg = options.note_fg, .bg = options.note_bg };
+    const note_text: cc.TextOptions = .{ .fg = options.note_fg, .bg = options.note_bg };
 
-    // 1. Lifelines first (messages and boxes draw over them).
+    // 1. Lifelines (dotted), then solid activation bars over their spans.
     for (lay.participants) |p| {
         try canvas.drawLine(
             .{ .x = p.lane_x, .y = p.lifeline_top },
             .{ .x = p.lane_x, .y = p.lifeline_bottom },
             lifeline_opts,
         );
+        for (p.active) |iv| {
+            try canvas.drawLine(.{ .x = p.lane_x, .y = iv.top }, .{ .x = p.lane_x, .y = iv.bottom }, activation_opts);
+        }
     }
 
     // 2. Header boxes and participant labels.
     for (lay.participants) |p| {
         try canvas.drawBox(toCanvasRect(p.rect), box_opts);
         try drawCenteredLabel(&canvas, p.rect, p.label, participant_text);
+    }
+
+    // 3. Notes (boxes that overlay the lifelines they annotate).
+    for (lay.notes) |note| {
+        try fillRect(&canvas, note.rect, note_text);
+        try canvas.drawBox(toCanvasRect(note.rect), note_box);
+        try drawCenteredLabel(&canvas, note.rect, note.text, note_text);
     }
 
     // 3. Message shafts.
@@ -125,6 +146,20 @@ fn drawPolyline(canvas: *cc.CellCanvas, points: []const seqlayout.Point, opts: c
             .{ .x = points[i].x, .y = points[i].y },
             opts,
         );
+    }
+}
+
+/// Paint a rectangle of spaces so an overlay (e.g. a note) hides the lifeline
+/// behind it before its border and text are drawn.
+fn fillRect(canvas: *cc.CellCanvas, rect: seqlayout.Rect, opts: cc.TextOptions) !void {
+    const bottom = rect.y + @as(i32, @intCast(rect.height));
+    const right = rect.x + @as(i32, @intCast(rect.width));
+    var ry: i32 = rect.y;
+    while (ry < bottom) : (ry += 1) {
+        var rx: i32 = rect.x;
+        while (rx < right) : (rx += 1) {
+            try canvas.drawText(rx, ry, " ", opts);
+        }
     }
 }
 
@@ -238,13 +273,39 @@ test "unicode lifelines and heads use distinct glyphs" {
     try testing.expect(has_open);
 }
 
+test "unicode activation bar uses a heavy lifeline segment" {
+    var diag: ?sequence.MermaidError = null;
+    var frame = try renderMermaidSequence(testing.allocator,
+        \\sequenceDiagram
+        \\    A->>+B: open
+        \\    B-->>-A: close
+    , .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    var heavy = false;
+    for (frame.codepoints) |c| {
+        if (c == 0x2503) heavy = true; // ┃ heavy vertical
+    }
+    try testing.expect(heavy);
+}
+
+test "note renders a labeled box" {
+    const text = try renderToText(testing.allocator,
+        \\sequenceDiagram
+        \\    A->>B: hi
+        \\    Note over A: hmm
+    );
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "hmm") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "+-") != null);
+}
+
 test "sequence golden fixtures" {
     var threaded: std.Io.Threaded = .init(testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
     const dir = "testdata/mermaid/sequence/";
 
-    const bases = [_][]const u8{ "basic", "self_message" };
+    const bases = [_][]const u8{ "basic", "self_message", "activations", "notes" };
     for (bases) |base| {
         const mmd_path = try std.fmt.allocPrint(testing.allocator, "{s}{s}.mmd", .{ dir, base });
         defer testing.allocator.free(mmd_path);

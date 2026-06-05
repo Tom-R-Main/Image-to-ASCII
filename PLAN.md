@@ -145,8 +145,11 @@ first-seen order, all eight message arrows (`->`, `-->`, `->>`, `-->>`, `-)`,
 (sized for boxes, adjacent labels, and self-loops), header boxes, and dotted
 lifelines; the renderer stacks messages with labels above arrows and distinct
 heads (filled/open/cross). A `renderMermaid` dispatcher auto-detects the diagram
-type from the header. Golden fixtures: `testdata/mermaid/sequence/*.{mmd,golden.txt}`.
-Deferred: notes, activations, alt/loop/opt blocks, and bottom participant boxes.
+type from the header. Notes (`left of`/`right of`/`over`, including `over A,B`)
+and activations (`->>+`/`-->>-` suffixes plus standalone `activate`/`deactivate`,
+nestable; active spans render as a solid heavy lifeline segment) are implemented.
+Golden fixtures: `testdata/mermaid/sequence/*.{mmd,golden.txt}`. Deferred:
+alt/loop/opt/par block frames and bottom participant boxes.
 
 ## Milestone 0: Repo Bootstrap
 

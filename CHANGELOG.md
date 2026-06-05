@@ -60,8 +60,17 @@
   `renderSequence`, `layoutSequence`, `MermaidRenderOptions`,
   `SequenceRenderOptions`, `SequenceDiagram`, `SequenceLayout`,
   `SequenceParticipant`, `SequenceMessage`, `DiagramKind`. Golden fixtures in
-  `testdata/mermaid/sequence/`. v0 limitations: header boxes are top-only (no
-  bottom repeat); notes, activations, and alt/loop/opt blocks are not yet parsed.
+  `testdata/mermaid/sequence/`.
+- Deepened sequence diagrams with **notes** and **activations**. The IR is now an
+  ordered `Event` stream (message/note/activate/deactivate). Notes parse as
+  `Note left of A`, `Note right of A`, `Note over A`, and `Note over A,B`, and
+  render as boxes overlaying the lifelines. Activations parse as the message
+  suffixes `->>+` / `-->>-` and the standalone `activate`/`deactivate` statements
+  (nestable); active lifeline spans render as a solid heavy segment (`┃` / `|`)
+  against the dotted idle lifeline (`┆` / `:`). New IR/layout types:
+  `Note`, `NotePlacement`, `Event`, plus `LaidNote` and lifeline `active`
+  intervals. v0 limitations remaining: alt/loop/opt/par block frames are not yet
+  parsed, and header boxes are top-only.
 - Added a diagram benchmark lab (`zig build bench -- --diagram --out
   bench/results/diagram-optimized.json`) with parse/layout/render rows for small
   and medium flowcharts. The optimization pass eliminated the renderer's

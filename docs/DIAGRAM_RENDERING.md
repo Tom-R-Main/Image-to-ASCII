@@ -203,8 +203,12 @@ the arrows.
 Supported: `participant`/`actor` with `as` aliases, implicit participants (created
 in first-seen order), all eight message arrows (`->`, `-->`, `->>`, `-->>`, `-)`,
 `--)`, `-x`, `--x`), self-messages (a small right-side loop), and `%%` comments.
-Heads are distinct: filled `►◄`, open async `▷◁`, cross `×`. Deferred: notes,
-activations, alt/loop/opt blocks, and a repeated participant row at the bottom.
+Heads are distinct: filled `►◄`, open async `▷◁`, cross `×`. **Notes**
+(`left of`/`right of`/`over`, including `over A,B`) render as boxes over the
+lifelines. **Activations** (`->>+` / `-->>-` suffixes and standalone
+`activate`/`deactivate`, nestable) render the active lifeline span as a solid
+heavy segment (`┃`) against the dotted idle line (`┆`). Deferred: alt/loop/opt/par
+block frames and a repeated participant row at the bottom.
 
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
 routes to the flowchart or sequence backend, so `image-to-ascii mermaid file.mmd`

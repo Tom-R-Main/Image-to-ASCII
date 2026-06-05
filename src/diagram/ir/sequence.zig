@@ -1,7 +1,8 @@
 //! Semantic model for sequence diagrams. Unlike the graph IR, this is a
-//! lane/time model: ordered participants own vertical lifelines, and ordered
-//! messages flow top-to-bottom between them. Layout and rendering consume this
-//! and never see Mermaid syntax.
+//! lane/time model: ordered participants own vertical lifelines, and an ordered
+//! stream of events (messages, notes, activations, and — later — block frames)
+//! flows top-to-bottom. Layout and rendering consume this and never see Mermaid
+//! syntax.
 
 /// Stroke of a message line. Mermaid: `->>`/`-)`/`-x` are solid, the `--`
 /// variants (`-->>`, `--)`, `--x`) are dotted.
@@ -38,13 +39,40 @@ pub const Message = struct {
     text: []const u8,
     line: LineStyle,
     head: HeadStyle,
+    /// `+` after the arrow: start an activation on the target at this message.
+    activate_target: bool = false,
+    /// `-` after the arrow: end the source's activation at this message.
+    deactivate_source: bool = false,
 
     pub fn isSelf(self: Message) bool {
         return self.from == self.to;
     }
 };
 
+pub const NotePlacement = enum {
+    left_of,
+    right_of,
+    over,
+};
+
+pub const Note = struct {
+    placement: NotePlacement,
+    /// Participant span. For `left of`/`right of`, `from == to`. For `over A,B`,
+    /// the note spans the lane range `[from, to]` (already ordered low..high).
+    from: ParticipantId,
+    to: ParticipantId,
+    text: []const u8,
+};
+
+/// One ordered item in the diagram timeline.
+pub const Event = union(enum) {
+    message: Message,
+    note: Note,
+    activate: ParticipantId,
+    deactivate: ParticipantId,
+};
+
 pub const SequenceDiagram = struct {
     participants: []Participant,
-    messages: []Message,
+    events: []Event,
 };

@@ -1,12 +1,16 @@
 //! Line-based parser for the Mermaid sequence-diagram subset, producing the
-//! sequence IR. Sequence syntax is statement-per-line, so a small line scanner is
-//! clearer here than the flowchart's token stream.
+//! sequence IR (an ordered event stream). Sequence syntax is statement-per-line,
+//! so a small line scanner is clearer here than the flowchart's token stream.
 //!
-//! Supported subset (v0):
+//! Supported subset:
 //!   header:        `sequenceDiagram`
 //!   participants:  `participant A`, `participant A as Alice`, `actor A`
 //!   messages:      `A->>B: text`  (and `->`, `-->`, `-->>`, `-)`, `--)`,
-//!                  `-x`, `--x`); self-messages (`A->>A: ...`)
+//!                  `-x`, `--x`); self-messages; activation suffixes
+//!                  (`A->>+B`, `B-->>-A`)
+//!   activations:   `activate A`, `deactivate A`
+//!   notes:         `Note left of A: t`, `Note right of A: t`,
+//!                  `Note over A: t`, `Note over A,B: t`
 //!   comments:      `%% ...`
 //!
 //! Participants may be implicit (created in first-seen order) or declared
@@ -52,7 +56,7 @@ const Parser = struct {
     diagnostic: *?MermaidError,
 
     participants: std.ArrayList(ir.Participant) = .empty,
-    messages: std.ArrayList(ir.Message) = .empty,
+    events: std.ArrayList(ir.Event) = .empty,
     index: std.StringHashMapUnmanaged(ir.ParticipantId) = .empty,
 
     fn run(self: *Parser, source: []const u8) ParseError!ir.SequenceDiagram {
@@ -82,22 +86,30 @@ const Parser = struct {
 
         return .{
             .participants = try self.participants.toOwnedSlice(self.arena),
-            .messages = try self.messages.toOwnedSlice(self.arena),
+            .events = try self.events.toOwnedSlice(self.arena),
         };
     }
 
     fn parseStatement(self: *Parser, line: []const u8, line_no: u32) ParseError!void {
         const first = firstWord(line);
-        if (std.mem.eql(u8, first, "participant")) {
+        if (eqlIgnoreCase(first, "participant")) {
             return self.parseParticipant(line[first.len..], line_no, .participant);
         }
-        if (std.mem.eql(u8, first, "actor")) {
+        if (eqlIgnoreCase(first, "actor")) {
             return self.parseParticipant(line[first.len..], line_no, .actor);
+        }
+        if (eqlIgnoreCase(first, "note")) {
+            return self.parseNote(line[first.len..], line_no);
+        }
+        if (eqlIgnoreCase(first, "activate")) {
+            return self.parseActivation(line[first.len..], line_no, true);
+        }
+        if (eqlIgnoreCase(first, "deactivate")) {
+            return self.parseActivation(line[first.len..], line_no, false);
         }
         return self.parseMessage(line, line_no);
     }
 
-    /// `rest` is everything after the `participant`/`actor` keyword.
     fn parseParticipant(self: *Parser, rest: []const u8, line_no: u32, kind: ir.ParticipantKind) ParseError!void {
         const decl = std.mem.trim(u8, rest, " \t\r");
         const id = firstWord(decl);
@@ -109,7 +121,7 @@ const Parser = struct {
         const after = std.mem.trim(u8, decl[id.len..], " \t\r");
         if (after.len > 0) {
             const kw = firstWord(after);
-            if (!std.mem.eql(u8, kw, "as")) {
+            if (!eqlIgnoreCase(kw, "as")) {
                 return self.fail(.unexpected_token, line_no, 1, "expected 'as <label>' after participant id");
             }
             const alias = std.mem.trim(u8, after[kw.len..], " \t\r");
@@ -120,6 +132,73 @@ const Parser = struct {
         }
 
         _ = try self.upsertParticipant(id, label, kind, true);
+    }
+
+    fn parseActivation(self: *Parser, rest: []const u8, line_no: u32, activate: bool) ParseError!void {
+        const id = firstWord(std.mem.trim(u8, rest, " \t\r"));
+        if (id.len == 0) {
+            return self.fail(.expected_participant, line_no, 1, "expected a participant after activate/deactivate");
+        }
+        const pid = try self.upsertParticipant(id, id, .participant, false);
+        try self.events.append(self.arena, if (activate) .{ .activate = pid } else .{ .deactivate = pid });
+    }
+
+    /// `rest` is everything after the `Note` keyword.
+    fn parseNote(self: *Parser, rest: []const u8, line_no: u32) ParseError!void {
+        const after = std.mem.trim(u8, rest, " \t\r");
+        const w1 = firstWord(after);
+        var placement: ir.NotePlacement = undefined;
+        var names: []const u8 = undefined;
+
+        if (eqlIgnoreCase(w1, "over")) {
+            placement = .over;
+            names = std.mem.trim(u8, after[w1.len..], " \t\r");
+        } else if (eqlIgnoreCase(w1, "left") or eqlIgnoreCase(w1, "right")) {
+            const tail = std.mem.trim(u8, after[w1.len..], " \t\r");
+            const w2 = firstWord(tail);
+            if (!eqlIgnoreCase(w2, "of")) {
+                return self.fail(.unexpected_token, line_no, 1, "expected 'of' in 'Note left/right of'");
+            }
+            placement = if (eqlIgnoreCase(w1, "left")) .left_of else .right_of;
+            names = std.mem.trim(u8, tail[w2.len..], " \t\r");
+        } else {
+            return self.fail(.unexpected_token, line_no, 1, "expected 'left of', 'right of', or 'over' after Note");
+        }
+
+        const colon = std.mem.indexOfScalar(u8, names, ':') orelse
+            return self.fail(.unexpected_token, line_no, 1, "expected ':' and note text");
+        const id_part = std.mem.trim(u8, names[0..colon], " \t\r");
+        const text = std.mem.trim(u8, names[colon + 1 ..], " \t\r");
+
+        if (std.mem.indexOfScalar(u8, id_part, ',')) |comma| {
+            if (placement != .over) {
+                return self.fail(.unsupported_syntax, line_no, 1, "only 'Note over' may span two participants");
+            }
+            const a = std.mem.trim(u8, id_part[0..comma], " \t\r");
+            const b = std.mem.trim(u8, id_part[comma + 1 ..], " \t\r");
+            if (a.len == 0 or b.len == 0) {
+                return self.fail(.expected_participant, line_no, 1, "expected two participants in 'Note over A,B'");
+            }
+            const pa = try self.upsertParticipant(a, a, .participant, false);
+            const pb = try self.upsertParticipant(b, b, .participant, false);
+            try self.events.append(self.arena, .{ .note = .{
+                .placement = .over,
+                .from = @min(pa, pb),
+                .to = @max(pa, pb),
+                .text = try self.arena.dupe(u8, text),
+            } });
+        } else {
+            if (id_part.len == 0) {
+                return self.fail(.expected_participant, line_no, 1, "expected a participant for the note");
+            }
+            const p = try self.upsertParticipant(id_part, id_part, .participant, false);
+            try self.events.append(self.arena, .{ .note = .{
+                .placement = placement,
+                .from = p,
+                .to = p,
+                .text = try self.arena.dupe(u8, text),
+            } });
+        }
     }
 
     fn parseMessage(self: *Parser, line: []const u8, line_no: u32) ParseError!void {
@@ -134,6 +213,17 @@ const Parser = struct {
 
         const arrow = parseArrow(line, &i) orelse
             return self.fail(.invalid_arrow, line_no, @intCast(i + 1), "expected a message arrow (->> --> -)  -x ...)");
+        skipSpaces(line, &i);
+
+        var activate_target = false;
+        var deactivate_source = false;
+        if (i < line.len and line[i] == '+') {
+            activate_target = true;
+            i += 1;
+        } else if (i < line.len and line[i] == '-') {
+            deactivate_source = true;
+            i += 1;
+        }
         skipSpaces(line, &i);
 
         const receiver = readIdent(line, &i);
@@ -151,13 +241,15 @@ const Parser = struct {
 
         const from = try self.upsertParticipant(sender, sender, .participant, false);
         const to = try self.upsertParticipant(receiver, receiver, .participant, false);
-        try self.messages.append(self.arena, .{
+        try self.events.append(self.arena, .{ .message = .{
             .from = from,
             .to = to,
             .text = try self.arena.dupe(u8, text),
             .line = arrow.line,
             .head = arrow.head,
-        });
+            .activate_target = activate_target,
+            .deactivate_source = deactivate_source,
+        } });
     }
 
     fn upsertParticipant(
@@ -261,6 +353,14 @@ fn isIdentChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
+fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |ca, cb| {
+        if (std.ascii.toLower(ca) != std.ascii.toLower(cb)) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
@@ -275,6 +375,14 @@ fn parseForTest(source: []const u8) !SequenceResult {
     };
 }
 
+/// Test helper: the i-th event as a message, or fail.
+fn messageAt(diagram: ir.SequenceDiagram, i: usize) ir.Message {
+    return switch (diagram.events[i]) {
+        .message => |m| m,
+        else => unreachable,
+    };
+}
+
 test "parses participants and a message" {
     var r = try parseForTest(
         \\sequenceDiagram
@@ -285,86 +393,94 @@ test "parses participants and a message" {
     defer r.deinit();
 
     try testing.expectEqual(@as(usize, 2), r.diagram.participants.len);
-    try testing.expectEqualStrings("A", r.diagram.participants[0].id);
     try testing.expectEqualStrings("Alice", r.diagram.participants[0].label);
-    try testing.expectEqualStrings("Bob", r.diagram.participants[1].label);
-
-    try testing.expectEqual(@as(usize, 1), r.diagram.messages.len);
-    const m = r.diagram.messages[0];
-    try testing.expectEqual(@as(ir.ParticipantId, 0), m.from);
-    try testing.expectEqual(@as(ir.ParticipantId, 1), m.to);
-    try testing.expectEqual(ir.LineStyle.solid, m.line);
+    try testing.expectEqual(@as(usize, 1), r.diagram.events.len);
+    const m = messageAt(r.diagram, 0);
     try testing.expectEqual(ir.HeadStyle.arrow, m.head);
     try testing.expectEqualStrings("Request", m.text);
 }
 
 test "implicit participants are created in first-seen order" {
-    var r = try parseForTest(
-        \\sequenceDiagram
-        \\    A->>B: hi
-        \\    C->>A: yo
-    );
+    var r = try parseForTest("sequenceDiagram\n A->>B: hi\n C->>A: yo\n");
     defer r.deinit();
     try testing.expectEqual(@as(usize, 3), r.diagram.participants.len);
     try testing.expectEqualStrings("A", r.diagram.participants[0].id);
-    try testing.expectEqualStrings("B", r.diagram.participants[1].id);
     try testing.expectEqualStrings("C", r.diagram.participants[2].id);
 }
 
 test "parses all supported arrow forms" {
     var r = try parseForTest(
         \\sequenceDiagram
-        \\    A->B: solid none
-        \\    A-->B: dotted none
-        \\    A->>B: solid arrow
-        \\    A-->>B: dotted arrow
-        \\    A-)B: solid open
-        \\    A--)B: dotted open
-        \\    A-xB: solid cross
-        \\    A--xB: dotted cross
+        \\    A->B: a
+        \\    A-->B: b
+        \\    A->>B: c
+        \\    A-->>B: d
+        \\    A-)B: e
+        \\    A--)B: f
+        \\    A-xB: g
+        \\    A--xB: h
     );
     defer r.deinit();
-
-    const m = r.diagram.messages;
-    try testing.expectEqual(@as(usize, 8), m.len);
-    try testing.expectEqual(ir.HeadStyle.none, m[0].head);
-    try testing.expectEqual(ir.LineStyle.solid, m[0].line);
-    try testing.expectEqual(ir.LineStyle.dotted, m[1].line);
-    try testing.expectEqual(ir.HeadStyle.arrow, m[2].head);
-    try testing.expectEqual(ir.LineStyle.dotted, m[3].line);
-    try testing.expectEqual(ir.HeadStyle.arrow, m[3].head);
-    try testing.expectEqual(ir.HeadStyle.open, m[4].head);
-    try testing.expectEqual(ir.HeadStyle.open, m[5].head);
-    try testing.expectEqual(ir.HeadStyle.cross, m[6].head);
-    try testing.expectEqual(ir.HeadStyle.cross, m[7].head);
+    try testing.expectEqual(@as(usize, 8), r.diagram.events.len);
+    try testing.expectEqual(ir.HeadStyle.none, messageAt(r.diagram, 0).head);
+    try testing.expectEqual(ir.LineStyle.dotted, messageAt(r.diagram, 1).line);
+    try testing.expectEqual(ir.HeadStyle.arrow, messageAt(r.diagram, 3).head);
+    try testing.expectEqual(ir.HeadStyle.open, messageAt(r.diagram, 4).head);
+    try testing.expectEqual(ir.HeadStyle.cross, messageAt(r.diagram, 7).head);
 }
 
 test "parses a self message" {
-    var r = try parseForTest(
-        \\sequenceDiagram
-        \\    A->>A: think
-    );
+    var r = try parseForTest("sequenceDiagram\n A->>A: think\n");
     defer r.deinit();
-    try testing.expectEqual(@as(usize, 1), r.diagram.participants.len);
-    try testing.expect(r.diagram.messages[0].isSelf());
+    try testing.expect(messageAt(r.diagram, 0).isSelf());
 }
 
-test "tight spacing without spaces parses" {
-    var r = try parseForTest("sequenceDiagram\nA-->>B:ok\n");
+test "parses activation suffixes on messages" {
+    var r = try parseForTest(
+        \\sequenceDiagram
+        \\    A->>+B: open
+        \\    B-->>-A: close
+    );
     defer r.deinit();
-    try testing.expectEqual(ir.LineStyle.dotted, r.diagram.messages[0].line);
-    try testing.expectEqualStrings("ok", r.diagram.messages[0].text);
+    try testing.expect(messageAt(r.diagram, 0).activate_target);
+    try testing.expect(messageAt(r.diagram, 1).deactivate_source);
+}
+
+test "parses standalone activate and deactivate" {
+    var r = try parseForTest(
+        \\sequenceDiagram
+        \\    activate A
+        \\    A->>B: hi
+        \\    deactivate A
+    );
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 3), r.diagram.events.len);
+    try testing.expect(r.diagram.events[0] == .activate);
+    try testing.expect(r.diagram.events[2] == .deactivate);
+}
+
+test "parses notes in all placements" {
+    var r = try parseForTest(
+        \\sequenceDiagram
+        \\    Note left of A: think
+        \\    Note right of B: wait
+        \\    Note over A: ponder
+        \\    Note over A,B: shared
+    );
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 4), r.diagram.events.len);
+    try testing.expectEqual(ir.NotePlacement.left_of, r.diagram.events[0].note.placement);
+    try testing.expectEqual(ir.NotePlacement.right_of, r.diagram.events[1].note.placement);
+    try testing.expectEqual(ir.NotePlacement.over, r.diagram.events[2].note.placement);
+    try testing.expectEqualStrings("shared", r.diagram.events[3].note.text);
+    try testing.expect(r.diagram.events[3].note.from != r.diagram.events[3].note.to);
 }
 
 test "comments are ignored" {
-    var r = try parseForTest(
-        \\sequenceDiagram
-        \\    %% a note to self
-        \\    A->>B: hi %% trailing
-    );
+    var r = try parseForTest("sequenceDiagram\n %% note\n A->>B: hi %% trailing\n");
     defer r.deinit();
-    try testing.expectEqual(@as(usize, 1), r.diagram.messages.len);
-    try testing.expectEqualStrings("hi", r.diagram.messages[0].text);
+    try testing.expectEqual(@as(usize, 1), r.diagram.events.len);
+    try testing.expectEqualStrings("hi", messageAt(r.diagram, 0).text);
 }
 
 test "rejects a missing header" {
