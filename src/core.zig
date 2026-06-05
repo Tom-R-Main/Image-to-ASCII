@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const color = @import("color.zig");
 const dither = @import("dither.zig");
 const luma = @import("luma.zig");
 const pixel = @import("pixel.zig");
@@ -8,6 +9,7 @@ const symbol = @import("symbol.zig");
 
 pub const Rgba8 = pixel.Rgba8;
 pub const Rgb8 = pixel.Rgb8;
+pub const ColorStat = color.ColorStat;
 
 pub const ValidationError = error{
     EmptyImage,
@@ -104,6 +106,10 @@ pub const Options = struct {
     contrast: f32 = 1.0,
     brightness: f32 = 0.0,
     ramp: []const u8 = default_density_ramp,
+    /// Representative-color policy for two-color symbol families (quadrant,
+    /// braille, and future sextant/octant/glyph modes). Defaults to the robust
+    /// trimmed mean recommended for photographic content.
+    color_stat: ColorStat = .trimmed_mean,
 };
 
 pub const Frame = struct {
@@ -227,18 +233,18 @@ fn renderDensity(
     terminal: TerminalProfile,
     options: Options,
 ) !Frame {
-    const size = sample.fittedSize(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
     const background = rgbFromBackground(terminal.background);
 
     var row: u32 = 0;
-    while (row < size.rows) : (row += 1) {
+    while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
-        while (col < size.columns) : (col += 1) {
-            const idx = @as(usize, row) * size.columns + col;
-            const region = sample.cellRegion(image, size, col, row, 1, 1, 0, 0);
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
+            const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
             const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
             const adjusted = luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert);
             frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
@@ -261,17 +267,17 @@ fn renderHalfBlock(
 ) !Frame {
     if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
 
-    const size = sample.fittedSize(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
     var row: u32 = 0;
-    while (row < size.rows) : (row += 1) {
+    while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
-        while (col < size.columns) : (col += 1) {
-            const idx = @as(usize, row) * size.columns + col;
-            const top_region = sample.cellRegion(image, size, col, row, 1, 2, 0, 0);
-            const bottom_region = sample.cellRegion(image, size, col, row, 1, 2, 0, 1);
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
+            const top_region = sample.cellRegion(mapping, col, row, 1, 2, 0, 0);
+            const bottom_region = sample.cellRegion(mapping, col, row, 1, 2, 0, 1);
             const top = sample.areaSample(image, terminal, top_region[0], top_region[1], top_region[2], top_region[3]);
             const bottom = sample.areaSample(image, terminal, bottom_region[0], bottom_region[1], bottom_region[2], bottom_region[3]);
 
@@ -296,15 +302,15 @@ fn renderQuadrant(
 ) !Frame {
     if (terminal.symbols == .ascii_only) return Error.UnsupportedRenderMode;
 
-    const size = sample.fittedSize(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
     var row: u32 = 0;
-    while (row < size.rows) : (row += 1) {
+    while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
-        while (col < size.columns) : (col += 1) {
-            const idx = @as(usize, row) * size.columns + col;
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
             var samples: [4]sample.Sample = undefined;
             var adjusted: [4]f32 = undefined;
             var sum: f32 = 0.0;
@@ -314,7 +320,7 @@ fn renderQuadrant(
                 var sx: u32 = 0;
                 while (sx < 2) : (sx += 1) {
                     const sub_idx = sy * 2 + sx;
-                    const region = sample.cellRegion(image, size, col, row, 2, 2, sx, sy);
+                    const region = sample.cellRegion(mapping, col, row, 2, 2, sx, sy);
                     samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
                     adjusted[sub_idx] = luma.applyAdjustments(samples[sub_idx].luma, options.contrast, options.brightness, options.invert);
                     sum += adjusted[sub_idx];
@@ -333,7 +339,7 @@ fn renderQuadrant(
 
             frame.codepoints[idx] = symbol.quadrantCodepoint(mask);
             if (frame.color != .none) {
-                assignPartitionColors(&frame, idx, &samples, mask);
+                assignPartitionColors(&frame, idx, &samples, mask, options.color_stat);
             }
         }
     }
@@ -351,39 +357,31 @@ fn renderBraille(
         return Error.UnsupportedRenderMode;
     }
 
-    const size = sample.fittedSize(image, terminal, options.fit);
-    var frame = try allocFrame(allocator, size.columns, size.rows, terminal.color);
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
     const background = rgbFromBackground(terminal.background);
 
     var row: u32 = 0;
-    while (row < size.rows) : (row += 1) {
+    while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
-        while (col < size.columns) : (col += 1) {
-            const idx = @as(usize, row) * size.columns + col;
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
             var mask: u8 = 0;
-            var samples: [8]sample.Sample = undefined;
-            var on_accum = sample.Sample{
-                .linear = .{ .r = 0.0, .g = 0.0, .b = 0.0 },
-                .rgb = background,
-                .luma = 0.0,
-            };
-            var on_count: u32 = 0;
+            var on_buf: [8]color.LinearRgb = undefined;
+            var on_count: usize = 0;
 
             var sy: u32 = 0;
             while (sy < 4) : (sy += 1) {
                 var sx: u32 = 0;
                 while (sx < 2) : (sx += 1) {
-                    const sub_idx = sy * 2 + sx;
-                    const region = sample.cellRegion(image, size, col, row, 2, 4, sx, sy);
-                    samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
-                    const adjusted = luma.applyAdjustments(samples[sub_idx].luma, options.contrast, options.brightness, options.invert);
+                    const region = sample.cellRegion(mapping, col, row, 2, 4, sx, sy);
+                    const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                    const adjusted = luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert);
                     if (adjusted >= dither.threshold(options.dither, col * 2 + sx, row * 4 + sy)) {
                         mask |= symbol.brailleDotMask(sx, sy);
-                        on_accum.linear.r += samples[sub_idx].linear.r;
-                        on_accum.linear.g += samples[sub_idx].linear.g;
-                        on_accum.linear.b += samples[sub_idx].linear.b;
+                        on_buf[on_count] = s.linear;
                         on_count += 1;
                     }
                 }
@@ -392,11 +390,7 @@ fn renderBraille(
             frame.codepoints[idx] = symbol.brailleCodepoint(mask);
             if (frame.color != .none) {
                 if (on_count > 0) {
-                    const denom = @as(f32, @floatFromInt(on_count));
-                    on_accum.linear.r /= denom;
-                    on_accum.linear.g /= denom;
-                    on_accum.linear.b /= denom;
-                    frame.fg[idx] = @import("color.zig").encodeSrgb(on_accum.linear);
+                    frame.fg[idx] = color.encodeSrgb(color.representative(on_buf[0..on_count], options.color_stat));
                 } else {
                     frame.fg[idx] = background;
                 }
@@ -431,22 +425,18 @@ fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
     };
 }
 
-fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sample, mask: u4) void {
-    var fg = @import("color.zig").LinearRgb{ .r = 0.0, .g = 0.0, .b = 0.0 };
-    var bg = @import("color.zig").LinearRgb{ .r = 0.0, .g = 0.0, .b = 0.0 };
-    var fg_count: u32 = 0;
-    var bg_count: u32 = 0;
+fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sample, mask: u4, stat: ColorStat) void {
+    var fg_buf: [4]color.LinearRgb = undefined;
+    var bg_buf: [4]color.LinearRgb = undefined;
+    var fg_count: usize = 0;
+    var bg_count: usize = 0;
 
     for (samples, 0..) |s, sample_idx| {
         if ((mask & (@as(u4, 1) << @intCast(sample_idx))) != 0) {
-            fg.r += s.linear.r;
-            fg.g += s.linear.g;
-            fg.b += s.linear.b;
+            fg_buf[fg_count] = s.linear;
             fg_count += 1;
         } else {
-            bg.r += s.linear.r;
-            bg.g += s.linear.g;
-            bg.b += s.linear.b;
+            bg_buf[bg_count] = s.linear;
             bg_count += 1;
         }
     }
@@ -454,21 +444,13 @@ fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sa
     if (fg_count == 0) {
         frame.fg[idx] = samples[0].rgb;
     } else {
-        const denom = @as(f32, @floatFromInt(fg_count));
-        fg.r /= denom;
-        fg.g /= denom;
-        fg.b /= denom;
-        frame.fg[idx] = @import("color.zig").encodeSrgb(fg);
+        frame.fg[idx] = color.encodeSrgb(color.representative(fg_buf[0..fg_count], stat));
     }
 
     if (bg_count == 0) {
         frame.bg[idx] = frame.fg[idx];
     } else {
-        const denom = @as(f32, @floatFromInt(bg_count));
-        bg.r /= denom;
-        bg.g /= denom;
-        bg.b /= denom;
-        frame.bg[idx] = @import("color.zig").encodeSrgb(bg);
+        frame.bg[idx] = color.encodeSrgb(color.representative(bg_buf[0..bg_count], stat));
     }
 }
 

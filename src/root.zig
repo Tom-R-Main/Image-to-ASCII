@@ -1,6 +1,7 @@
 const core = @import("core.zig");
 
 pub const ColorMode = core.ColorMode;
+pub const ColorStat = core.ColorStat;
 pub const DitherMode = core.DitherMode;
 pub const Error = core.Error;
 pub const FitMode = core.FitMode;

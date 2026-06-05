@@ -45,6 +45,31 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const compare_exe = b.addExecutable(.{
+        .name = "image-to-ascii-compare",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/render_compare.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "image_to_ascii", .module = mod },
+                .{ .name = "ppm_support", .module = ppm_support_mod },
+            },
+        }),
+    });
+
+    const calibrate_exe = b.addExecutable(.{
+        .name = "image-to-ascii-calibrate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/calibrate_font.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "image_to_ascii", .module = mod },
+            },
+        }),
+    });
+
     const run_step = b.step("run", "Run the CLI");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -59,6 +84,20 @@ pub fn build(b: *std.Build) void {
         bench_cmd.addArgs(args);
     }
     bench_step.dependOn(&bench_cmd.step);
+
+    const compare_step = b.step("compare", "Render an image and score reconstruction quality");
+    const compare_cmd = b.addRunArtifact(compare_exe);
+    if (b.args) |args| {
+        compare_cmd.addArgs(args);
+    }
+    compare_step.dependOn(&compare_cmd.step);
+
+    const calibrate_step = b.step("calibrate", "Generate or inspect a glyph atlas (scaffold)");
+    const calibrate_cmd = b.addRunArtifact(calibrate_exe);
+    if (b.args) |args| {
+        calibrate_cmd.addArgs(args);
+    }
+    calibrate_step.dependOn(&calibrate_cmd.step);
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
@@ -80,9 +119,21 @@ pub fn build(b: *std.Build) void {
     });
     const run_bench_tests = b.addRunArtifact(bench_tests);
 
+    const compare_tests = b.addTest(.{
+        .root_module = compare_exe.root_module,
+    });
+    const run_compare_tests = b.addRunArtifact(compare_tests);
+
+    const calibrate_tests = b.addTest(.{
+        .root_module = calibrate_exe.root_module,
+    });
+    const run_calibrate_tests = b.addRunArtifact(calibrate_tests);
+
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_ppm_support_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_bench_tests.step);
+    test_step.dependOn(&run_compare_tests.step);
+    test_step.dependOn(&run_calibrate_tests.step);
 }

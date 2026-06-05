@@ -9,6 +9,18 @@ pub const Size = struct {
     rows: u32,
 };
 
+/// A render mapping describes both the output cell grid and the rectangle of
+/// source pixels (in source coordinates) that maps onto it. `contain` and
+/// `stretch` use the whole source; `cover` fills the grid and crops the source.
+pub const Mapping = struct {
+    columns: u32,
+    rows: u32,
+    src_x0: f32,
+    src_y0: f32,
+    src_x1: f32,
+    src_y1: f32,
+};
+
 pub const Sample = struct {
     linear: color.LinearRgb,
     rgb: core.Rgb8,
@@ -16,29 +28,72 @@ pub const Sample = struct {
 };
 
 pub fn fittedSize(image: core.ImageView, terminal: core.TerminalProfile, fit: core.FitMode) Size {
-    if (fit == .stretch or fit == .cover) {
-        return .{ .columns = terminal.columns, .rows = terminal.rows };
-    }
+    const mapping = fitMapping(image, terminal, fit);
+    return .{ .columns = mapping.columns, .rows = mapping.rows };
+}
 
-    const source_aspect = @as(f32, @floatFromInt(image.width)) / @as(f32, @floatFromInt(image.height));
+pub fn fitMapping(image: core.ImageView, terminal: core.TerminalProfile, fit: core.FitMode) Mapping {
+    const w = @as(f32, @floatFromInt(image.width));
+    const h = @as(f32, @floatFromInt(image.height));
+    const full_source = Mapping{
+        .columns = terminal.columns,
+        .rows = terminal.rows,
+        .src_x0 = 0.0,
+        .src_y0 = 0.0,
+        .src_x1 = w,
+        .src_y1 = h,
+    };
+
+    const source_aspect = w / h;
     const terminal_aspect = (@as(f32, @floatFromInt(terminal.columns)) /
         @as(f32, @floatFromInt(terminal.rows))) * terminal.cell_aspect;
 
-    if (terminal_aspect > source_aspect) {
-        const rows = terminal.rows;
-        const cols_float = (@as(f32, @floatFromInt(rows)) * source_aspect) / terminal.cell_aspect;
-        return .{
-            .columns = @max(1, @min(terminal.columns, @as(u32, @intFromFloat(@floor(cols_float))))),
-            .rows = rows,
-        };
-    }
+    switch (fit) {
+        .stretch => return full_source,
+        .cover => {
+            // Keep the full grid; crop the source so its displayed aspect
+            // matches the grid and the grid is fully covered (centered crop).
+            var mapping = full_source;
+            if (source_aspect > terminal_aspect) {
+                const crop_w = h * terminal_aspect;
+                const x0 = (w - crop_w) / 2.0;
+                mapping.src_x0 = x0;
+                mapping.src_x1 = x0 + crop_w;
+            } else {
+                const crop_h = w / terminal_aspect;
+                const y0 = (h - crop_h) / 2.0;
+                mapping.src_y0 = y0;
+                mapping.src_y1 = y0 + crop_h;
+            }
+            return mapping;
+        },
+        .contain => {
+            // Shrink the grid so the whole source fits without distortion.
+            if (terminal_aspect > source_aspect) {
+                const rows = terminal.rows;
+                const cols_float = (@as(f32, @floatFromInt(rows)) * source_aspect) / terminal.cell_aspect;
+                return .{
+                    .columns = @max(1, @min(terminal.columns, @as(u32, @intFromFloat(@floor(cols_float))))),
+                    .rows = rows,
+                    .src_x0 = 0.0,
+                    .src_y0 = 0.0,
+                    .src_x1 = w,
+                    .src_y1 = h,
+                };
+            }
 
-    const columns = terminal.columns;
-    const rows_float = (@as(f32, @floatFromInt(columns)) * terminal.cell_aspect) / source_aspect;
-    return .{
-        .columns = columns,
-        .rows = @max(1, @min(terminal.rows, @as(u32, @intFromFloat(@floor(rows_float))))),
-    };
+            const columns = terminal.columns;
+            const rows_float = (@as(f32, @floatFromInt(columns)) * terminal.cell_aspect) / source_aspect;
+            return .{
+                .columns = columns,
+                .rows = @max(1, @min(terminal.rows, @as(u32, @intFromFloat(@floor(rows_float))))),
+                .src_x0 = 0.0,
+                .src_y0 = 0.0,
+                .src_x1 = w,
+                .src_y1 = h,
+            };
+        },
+    }
 }
 
 pub fn areaSample(
@@ -97,20 +152,19 @@ pub fn areaSample(
     };
 }
 
-pub fn cellRegion(image: core.ImageView, size: Size, cell_x: u32, cell_y: u32, sx: u32, sy: u32, sub_x: u32, sub_y: u32) [4]f32 {
-    const virtual_w = size.columns * sx;
-    const virtual_h = size.rows * sy;
+pub fn cellRegion(mapping: Mapping, cell_x: u32, cell_y: u32, sx: u32, sy: u32, sub_x: u32, sub_y: u32) [4]f32 {
+    const virtual_w = mapping.columns * sx;
+    const virtual_h = mapping.rows * sy;
     const vx = cell_x * sx + sub_x;
     const vy = cell_y * sy + sub_y;
 
-    const x0 = (@as(f32, @floatFromInt(vx)) * @as(f32, @floatFromInt(image.width))) /
-        @as(f32, @floatFromInt(virtual_w));
-    const x1 = (@as(f32, @floatFromInt(vx + 1)) * @as(f32, @floatFromInt(image.width))) /
-        @as(f32, @floatFromInt(virtual_w));
-    const y0 = (@as(f32, @floatFromInt(vy)) * @as(f32, @floatFromInt(image.height))) /
-        @as(f32, @floatFromInt(virtual_h));
-    const y1 = (@as(f32, @floatFromInt(vy + 1)) * @as(f32, @floatFromInt(image.height))) /
-        @as(f32, @floatFromInt(virtual_h));
+    const span_x = mapping.src_x1 - mapping.src_x0;
+    const span_y = mapping.src_y1 - mapping.src_y0;
+
+    const x0 = mapping.src_x0 + (@as(f32, @floatFromInt(vx)) * span_x) / @as(f32, @floatFromInt(virtual_w));
+    const x1 = mapping.src_x0 + (@as(f32, @floatFromInt(vx + 1)) * span_x) / @as(f32, @floatFromInt(virtual_w));
+    const y0 = mapping.src_y0 + (@as(f32, @floatFromInt(vy)) * span_y) / @as(f32, @floatFromInt(virtual_h));
+    const y1 = mapping.src_y0 + (@as(f32, @floatFromInt(vy + 1)) * span_y) / @as(f32, @floatFromInt(virtual_h));
 
     return .{ x0, y0, x1, y1 };
 }
@@ -130,6 +184,35 @@ test "contain fit accounts for terminal cell aspect" {
 
     try std.testing.expectEqual(@as(u32, 80), size.columns);
     try std.testing.expectEqual(@as(u32, 40), size.rows);
+}
+
+test "cover fit fills the grid and crops the source" {
+    const pixels = [_]core.Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
+    // 100x100 source into an 80x40 grid at cell_aspect 0.5 has a display aspect
+    // of (80/40)*0.5 = 1.0, which matches the square source, so no crop.
+    const square = fitMapping(
+        .{ .width = 100, .height = 100, .stride = @sizeOf(core.Rgba8), .pixels = &pixels },
+        .{ .columns = 80, .rows = 40, .cell_aspect = 0.5 },
+        .cover,
+    );
+    try std.testing.expectEqual(@as(u32, 80), square.columns);
+    try std.testing.expectEqual(@as(u32, 40), square.rows);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), square.src_x0, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), square.src_x1, 0.001);
+
+    // A wide 200x100 source into the same grid (display aspect 1.0) must crop
+    // the sides: crop_w = height * display_aspect = 100, centered at x in [50,150].
+    const wide = fitMapping(
+        .{ .width = 200, .height = 100, .stride = @sizeOf(core.Rgba8), .pixels = &pixels },
+        .{ .columns = 80, .rows = 40, .cell_aspect = 0.5 },
+        .cover,
+    );
+    try std.testing.expectEqual(@as(u32, 80), wide.columns);
+    try std.testing.expectEqual(@as(u32, 40), wide.rows);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), wide.src_x0, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 150.0), wide.src_x1, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), wide.src_y0, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), wide.src_y1, 0.001);
 }
 
 test "area sample averages tiny image in linear light" {

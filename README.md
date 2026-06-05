@@ -74,6 +74,13 @@ defer frame.deinit(allocator);
 
 ## Current Status
 
-Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling, density
-rendering, truecolor half-block rendering, quadrant rendering, monochrome Braille rendering, ordered dithering, ANSI
+Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling
+(`contain`/`cover`/`stretch`, with `cover` cropping the source rather than distorting it), density rendering, truecolor
+half-block rendering, quadrant rendering, monochrome Braille rendering, ordered dithering, a configurable
+representative-color solve for two-color symbol families (`Options.color_stat`: `mean`/`trimmed_mean`/`median`), ANSI
 writer output, a synthetic-image CLI, PPM/PAM fixture input, and a small synthetic benchmark command.
+
+A quality harness scaffold lives under `tools/` (`zig build compare`): it renders an image, reconstructs it from the
+emitted cells using the known block/Braille masks, and scores it with PSNR/SSIM/edge-correlation — no font rasterizer
+required. `tools/calibrate_font.zig` defines the glyph-atlas format for the upcoming glyph modes and stubs the
+rasterization step.

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Configurable representative-color solve for two-color symbol families
+  (`Options.color_stat`: `mean`, `trimmed_mean`, `median`) in linear light, per
+  RESEARCH.md "Color Strategy". Quadrant and Braille foreground/background
+  colors now default to the robust `trimmed_mean` instead of a plain mean.
+- Quality-harness scaffold under `tools/`: `zig build compare` renders an image,
+  reconstructs it from the emitted cells (block/Braille masks; density halftone
+  approximation), and scores PSNR/SSIM/edge-correlation with no font rasterizer.
+- `tools/calibrate_font.zig` scaffold defining the `GlyphAtlas` format and a
+  stubbed rasterization step for the upcoming glyph modes.
+
+### Fixed
+
+- `FitMode.cover` now fills the output grid by cropping the source to the grid's
+  display aspect (centered) instead of stretching it like `stretch`.
+
 ## v0.1.0 - 2026-06-05
 
 ### Added
