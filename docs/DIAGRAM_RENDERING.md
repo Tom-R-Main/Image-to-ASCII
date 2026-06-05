@@ -30,7 +30,7 @@ syntax errors instead of pretending to be fully compatible on day one.
 
 ## Current Foundation
 
-The checked-in foundation is `CellCanvas`:
+The checked-in drawing substrate is `CellCanvas`:
 
 - `drawText`
 - `drawBox`
@@ -43,6 +43,25 @@ The checked-in foundation is `CellCanvas`:
 
 The canvas has no per-cell heap allocation and does not depend on image sampling, decoders, terminal probing, OpenTUI, or
 Mermaid.
+
+The first input frontend is the **Mermaid flowchart parser**
+(`src/diagram/mermaid/`). It compiles a flowchart subset into the graph IR
+(`src/diagram/ir/graph.zig`) and is independent of layout and rendering:
+
+```zig
+var diagnostic: ?ascii.MermaidError = null;
+var result = try ascii.parseFlowchart(allocator, source, &diagnostic);
+defer result.deinit();
+// result.diagram: GraphDiagram { direction, nodes[], edges[] }
+```
+
+The lexer fully classifies edge operators (stroke + endpoint) so it reproduces
+Mermaid's `A---oB` circle-edge trap exactly, and the parser rejects lowercase
+`end` as a node id rather than emitting the broken graph real Mermaid produces.
+On any syntax error it returns `error.MermaidSyntax` and fills `diagnostic` with
+a kind plus 1-based line/column — the actionable feedback an agent needs to fix
+its own output. The parser owns an arena; all node/edge strings are copied into
+it, so the diagram outlives the source buffer.
 
 ## Mermaid Compatibility Promise
 
@@ -66,9 +85,9 @@ that is safe, such as rendering an unsupported shape as a rectangle.
 
 ## Build Order
 
-1. `CellCanvas` primitives.
-2. Minimal Mermaid flowchart lexer/parser.
-3. Diagram IR for graph nodes and edges.
+1. ~~`CellCanvas` primitives.~~ ✅
+2. ~~Minimal Mermaid flowchart lexer/parser.~~ ✅
+3. ~~Diagram IR for graph nodes and edges.~~ ✅
 4. Stable layered graph layout with Manhattan routing.
 5. Flowchart renderer that writes to `CellCanvas`.
 6. Sequence diagram parser and lane/time layout.

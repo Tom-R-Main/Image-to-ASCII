@@ -145,8 +145,32 @@ defer frame.deinit(allocator);
 try ascii.renderFrameToWriter(writer, frame);
 ```
 
-The canvas supports Unicode box drawing and ASCII fallback glyph sets. Mermaid support should build on top of this path:
+The canvas supports Unicode box drawing and ASCII fallback glyph sets. Mermaid support builds on top of this path:
 `Mermaid text -> parser -> Diagram IR -> layout -> CellCanvas -> Frame`, not `Mermaid -> SVG/PNG -> image renderer`.
+
+### Mermaid flowchart frontend
+
+The first diagram frontend parses a practical Mermaid flowchart subset into a semantic graph IR. Parsing is independent
+of layout and rendering (both are upcoming slices), so today this gives you a clean, validated `GraphDiagram` from Mermaid
+text:
+
+```zig
+var diagnostic: ?ascii.MermaidError = null;
+var result = ascii.parseFlowchart(allocator, source, &diagnostic) catch |err| {
+    if (diagnostic) |d| std.debug.print("{d}:{d}: {s}\n", .{ d.line, d.column, d.message });
+    return err;
+};
+defer result.deinit();
+// result.diagram: GraphDiagram { direction, nodes[], edges[] }
+```
+
+Supported: `flowchart`/`graph` headers, directions `TD`/`TB`/`LR`/`RL`/`BT`, node shapes (`A[rect]`, `A(round)`,
+`A((circle))`, `A{diamond}`), quoted labels, edge strokes (`-->`, `---`, `-.->`, `==>`), circle/cross ends (`--o`,
+`--x`), edge chains, pipe edge labels (`A -->|label| B`), and `%%` comments. The lexer reproduces Mermaid's `A---oB`
+circle-edge trap, and the parser rejects lowercase `end` as a node id with a precise diagnostic instead of emitting the
+broken graph real Mermaid produces. On any syntax error it returns `error.MermaidSyntax` and fills `diagnostic` with a
+kind plus 1-based line/column — actionable feedback for an agent fixing its own output. See
+[docs/DIAGRAM_RENDERING.md](docs/DIAGRAM_RENDERING.md).
 
 ### Render modes and support matrix
 

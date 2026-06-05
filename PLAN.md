@@ -79,16 +79,25 @@ Status: implemented.
 
 ### Slice 2: Minimal Mermaid Flowchart Parser
 
-Support only the practical first subset:
+Status: implemented (`src/diagram/mermaid/`, IR in `src/diagram/ir/graph.zig`).
+
+Supported first subset:
 
 - `graph` / `flowchart`,
-- directions `TD`, `TB`, `LR`, `RL`, `BT`,
-- node IDs and labels such as `A[Label]`,
-- basic edge operators `-->`, `---`, `-.->`, `==>`,
+- directions `TD`, `TB`, `LR`, `RL`, `BT` (default top-down),
+- node IDs, shapes (`[rect]`, `(round)`, `((circle))`, `{diamond}`), and quoted
+  labels such as `A["two words"]`,
+- edge operators `-->`, `---`, `-.->`, `==>` plus circle/cross ends `--o`, `--x`,
+- edge chains `A --> B --> C`,
 - edge labels such as `A -->|label| B`,
 - comments beginning with `%%`.
 
-Reject unsupported syntax with precise line/column diagnostics in strict mode.
+The lexer fully classifies edge operators and reproduces Mermaid's `A---oB`
+circle-edge trap; the parser rejects lowercase `end` as a node id. Syntax errors
+return `error.MermaidSyntax` with a `MermaidError` (kind + 1-based line/column).
+The result owns an arena and copies all strings into it, so the diagram outlives
+the source. Still outstanding for a later slice: the `-- text -->` inline-label
+form, subgraphs, and `A@{ shape: ... }` general shape syntax.
 
 ### Slice 3: Layered Flowchart Renderer
 

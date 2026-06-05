@@ -12,6 +12,19 @@
   existing `Frame` contract, so the ANSI writer and ANSI diff writer work
   unchanged. Mermaid remains a future frontend over `Diagram IR -> layout ->
   CellCanvas`, not an SVG/PNG/image-renderer path.
+- Added the first diagram input frontend: a hand-written Mermaid **flowchart
+  subset** lexer and parser (`src/diagram/mermaid/`) compiling to a semantic
+  graph IR (`src/diagram/ir/graph.zig`). Supports `flowchart`/`graph` headers,
+  directions (TD/TB/LR/RL/BT), node shapes (`[rect]`, `(round)`, `((circle))`,
+  `{diamond}`), quoted labels, edge strokes (`-->`, `---`, `-.->`, `==>`),
+  circle/cross ends (`--o`, `--x`), edge chains, pipe edge labels (`-->|...|`),
+  and `%%` comments. The lexer reproduces Mermaid's `A---oB` circle-edge trap,
+  and the parser rejects lowercase `end` as a node id with a precise diagnostic
+  rather than emitting a broken graph. Syntax errors return `error.MermaidSyntax`
+  with a `MermaidError` carrying kind and 1-based line/column. New public API:
+  `parseFlowchart`, `FlowchartResult`, `GraphDiagram`, `Node`, `Edge`,
+  `Direction`, `NodeShape`, `LineKind`, `ArrowKind`, `NodeId`, `MermaidError`,
+  `MermaidErrorKind`. Layout and rendering of the IR are the next slices.
 
 ### CLI and Tooling
 
