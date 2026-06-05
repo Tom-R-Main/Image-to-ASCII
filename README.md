@@ -44,8 +44,36 @@ zig build
 zig build bench
 ```
 
+## Examples
+
+Render a synthetic density preview:
+
+```sh
+zig build run -- --synthetic gradient --width 40 --height 12 --mode density --color none
+```
+
+Render a checked-in PPM fixture with quadrant symbols:
+
+```sh
+zig build run -- --input testdata/diagonal.ppm --width 1 --height 1 --mode partition --partition quadrant --color none
+```
+
+Use the library from Zig:
+
+```zig
+const ascii = @import("image_to_ascii");
+
+var frame = try ascii.renderToCells(
+    allocator,
+    image_view,
+    .{ .columns = 80, .rows = 24, .color = .truecolor },
+    .{ .mode = .partition, .partition = .half_1x2 },
+);
+defer frame.deinit(allocator);
+```
+
 ## Current Status
 
 Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling, density
 rendering, truecolor half-block rendering, quadrant rendering, monochrome Braille rendering, ordered dithering, ANSI
-writer output, a synthetic-image CLI, and a small synthetic benchmark command.
+writer output, a synthetic-image CLI, PPM/PAM fixture input, and a small synthetic benchmark command.

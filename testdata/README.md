@@ -8,6 +8,11 @@ Allowed:
 - tiny PPM/PAM fixtures for CLI/test-support decoding,
 - hand-authored golden outputs.
 
+Current fixtures:
+
+- `diagonal.ppm`: 2x2 white/black diagonal for quadrant and Braille checks.
+- `color-bars.ppm`: 4x1 RGB/white bars for color and density checks.
+
 Avoid:
 
 - large real-image corpora,

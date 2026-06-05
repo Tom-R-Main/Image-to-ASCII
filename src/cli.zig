@@ -1,8 +1,10 @@
 const std = @import("std");
 const ascii = @import("image_to_ascii");
+const ppm = @import("ppm_support");
 const Io = std.Io;
 
 const CliOptions = struct {
+    input_path: ?[]const u8 = null,
     synthetic: Synthetic = .gradient,
     width: u32 = 80,
     height: u32 = 24,
@@ -45,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    renderSynthetic(stdout, arena, options) catch |err| {
+    renderSelected(stdout, init.io, arena, options) catch |err| {
         try stderr.print("error: {s}\n", .{describeCliError(err)});
         try stderr.flush();
         std.process.exit(1);
@@ -53,8 +55,16 @@ pub fn main(init: std.process.Init) !void {
     try stdout.flush();
 }
 
-fn renderSynthetic(writer: *std.Io.Writer, allocator: std.mem.Allocator, options: CliOptions) !void {
-    const image = try makeSynthetic(allocator, options.synthetic, 96, 48);
+fn renderSelected(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options: CliOptions) !void {
+    const image = if (options.input_path) |path|
+        try loadInput(io, allocator, path)
+    else
+        try makeSynthetic(allocator, options.synthetic, 96, 48);
+
+    try renderImage(writer, allocator, image, options);
+}
+
+fn renderImage(writer: *std.Io.Writer, allocator: std.mem.Allocator, image: ascii.ImageView, options: CliOptions) !void {
     try ascii.renderToWriter(
         writer,
         allocator,
@@ -75,6 +85,11 @@ fn renderSynthetic(writer: *std.Io.Writer, allocator: std.mem.Allocator, options
     );
 }
 
+fn loadInput(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !ascii.ImageView {
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(16 * 1024 * 1024));
+    return ppm.decode(allocator, bytes);
+}
+
 fn parseArgs(args: []const []const u8) !CliOptions {
     var options = CliOptions{};
 
@@ -83,6 +98,10 @@ fn parseArgs(args: []const []const u8) !CliOptions {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--help")) {
             continue;
+        } else if (std.mem.eql(u8, arg, "--input")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            options.input_path = args[i];
         } else if (std.mem.eql(u8, arg, "--invert")) {
             options.invert = true;
         } else if (std.mem.eql(u8, arg, "--synthetic")) {
@@ -241,6 +260,13 @@ fn describeCliError(err: anyerror) []const u8 {
         error.InvalidDither => "dither must be none, ordered-2x2, or ordered-4x4",
         error.InvalidDimension => "width and height must be positive integers",
         error.UnknownArgument => "unknown argument",
+        ppm.DecodeError.UnsupportedFormat => "input file must be P3/P6 PPM or P7 PAM",
+        ppm.DecodeError.InvalidHeader => "input image header is invalid",
+        ppm.DecodeError.InvalidDimensions => "input image dimensions are invalid",
+        ppm.DecodeError.InvalidMaxValue => "input image max value must be 255",
+        ppm.DecodeError.InvalidRaster => "input image raster data is invalid or incomplete",
+        error.FileNotFound => "input file was not found",
+        error.StreamTooLong => "input file is too large",
         ascii.Error.UnsupportedColorMode => "ANSI 16 and 256 color output are not implemented yet; use none or truecolor",
         ascii.Error.UnsupportedRenderMode => "requested renderer is not implemented or not supported by the selected symbols",
         else => @errorName(err),
@@ -252,6 +278,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\usage: image-to-ascii [options]
         \\
         \\options:
+        \\  --input path.ppm|path.pam
         \\  --synthetic gradient|checkerboard|color-bars
         \\  --width N
         \\  --height N
@@ -262,6 +289,8 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --dither none|ordered-2x2|ordered-4x4
         \\  --invert
         \\  --help
+        \\
+        \\If --input is omitted, a synthetic gradient is rendered.
         \\
     );
 }
@@ -301,7 +330,8 @@ test "CLI density gradient golden output" {
 
     var buffer: [128]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buffer);
-    try renderSynthetic(&writer, arena_state.allocator(), .{
+    const image = try makeSynthetic(arena_state.allocator(), .gradient, 96, 48);
+    try renderImage(&writer, arena_state.allocator(), image, .{
         .synthetic = .gradient,
         .width = 4,
         .height = 2,
@@ -318,7 +348,8 @@ test "CLI checkerboard quadrant golden output" {
 
     var buffer: [128]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buffer);
-    try renderSynthetic(&writer, arena_state.allocator(), .{
+    const image = try makeSynthetic(arena_state.allocator(), .checkerboard, 96, 48);
+    try renderImage(&writer, arena_state.allocator(), image, .{
         .synthetic = .checkerboard,
         .width = 4,
         .height = 2,
@@ -337,7 +368,8 @@ test "CLI checkerboard Braille golden output" {
 
     var buffer: [128]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buffer);
-    try renderSynthetic(&writer, arena_state.allocator(), .{
+    const image = try makeSynthetic(arena_state.allocator(), .checkerboard, 96, 48);
+    try renderImage(&writer, arena_state.allocator(), image, .{
         .synthetic = .checkerboard,
         .width = 4,
         .height = 2,
@@ -357,4 +389,34 @@ test "CLI accepts ansi color flags even though core rejects them for now" {
     };
     const options = try parseArgs(&args);
     try std.testing.expectEqual(ascii.ColorMode.ansi256, options.color);
+}
+
+test "CLI parses input path" {
+    const args = [_][]const u8{
+        "image-to-ascii",
+        "--input",
+        "testdata/diagonal.ppm",
+    };
+    const options = try parseArgs(&args);
+    try std.testing.expectEqualStrings("testdata/diagonal.ppm", options.input_path.?);
+}
+
+test "CLI fixture density golden output" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var buffer: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    var threaded = std.Io.Threaded.init_single_threaded;
+    try renderSelected(&writer, threaded.io(), arena_state.allocator(), .{
+        .input_path = "testdata/diagonal.ppm",
+        .width = 1,
+        .height = 1,
+        .mode = .partition,
+        .partition = .quadrant_2x2,
+        .color = .none,
+        .fit = .stretch,
+    });
+
+    try std.testing.expectEqualStrings("▚\n", writer.buffered());
 }

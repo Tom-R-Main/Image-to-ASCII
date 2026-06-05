@@ -9,6 +9,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const ppm_support_mod = b.createModule(.{
+        .root_source_file = b.path("test_support/ppm.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "image_to_ascii", .module = mod },
+        },
+    });
+
     const exe = b.addExecutable(.{
         .name = "image-to-ascii",
         .root_module = b.createModule(.{
@@ -17,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "image_to_ascii", .module = mod },
+                .{ .name = "ppm_support", .module = ppm_support_mod },
             },
         }),
     });
@@ -55,6 +65,11 @@ pub fn build(b: *std.Build) void {
     });
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
+    const ppm_support_tests = b.addTest(.{
+        .root_module = ppm_support_mod,
+    });
+    const run_ppm_support_tests = b.addRunArtifact(ppm_support_tests);
+
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
@@ -67,6 +82,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_ppm_support_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_bench_tests.step);
 }
