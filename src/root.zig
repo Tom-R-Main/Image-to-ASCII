@@ -11,6 +11,7 @@ pub const Options = core.Options;
 pub const PartitionKind = core.PartitionKind;
 pub const Quality = core.Quality;
 pub const RenderMode = core.RenderMode;
+pub const SampleStrategy = core.SampleStrategy;
 pub const RenderError = core.RenderError;
 pub const Rgb8 = core.Rgb8;
 pub const Rgba8 = core.Rgba8;
@@ -29,6 +30,7 @@ test {
     _ = @import("color.zig");
     _ = @import("core.zig");
     _ = @import("dither.zig");
+    _ = @import("integral.zig");
     _ = @import("luma.zig");
     _ = @import("sample.zig");
     _ = @import("symbol.zig");

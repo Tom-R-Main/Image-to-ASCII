@@ -16,6 +16,14 @@
 - Reworked `zig build bench` into a render-kernel matrix (density / half /
   quadrant / Braille, mono and truecolor, plus an ANSI-writer row) reporting
   ns/cell, cells/sec, and bytes.
+- Added an integral-image (summed-area table) luma sampler for monochrome modes,
+  selectable via `Options.sample_strategy` (`auto` / `direct_box` /
+  `integral_luma`). Fractional bilinear queries make it equal to the direct
+  sampler to floating-point rounding (verified by unit, render-level, and quality
+  harness A/B tests). `auto` stays on the direct sampler because building the
+  table is itself an O(image) pass — it only pays off when reused across renders
+  (live resize), which is what the explicit `integral_luma` strategy is for. The
+  harness gained `--strategy`.
 
 ### Added
 

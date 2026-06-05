@@ -10,6 +10,7 @@ const symbol = @import("symbol.zig");
 pub const Rgba8 = pixel.Rgba8;
 pub const Rgb8 = pixel.Rgb8;
 pub const ColorStat = color.ColorStat;
+pub const SampleStrategy = sample.SampleStrategy;
 
 pub const ValidationError = error{
     EmptyImage,
@@ -110,6 +111,11 @@ pub const Options = struct {
     /// braille, and future sextant/octant/glyph modes). Defaults to the robust
     /// trimmed mean recommended for photographic content.
     color_stat: ColorStat = .trimmed_mean,
+    /// Sampling strategy. `auto` (default) uses the exact direct sampler for
+    /// one-shot renders; `integral_luma` opts into summed-area-table sampling for
+    /// monochrome modes (intended for reuse across renders). Both produce the
+    /// same output to floating-point rounding.
+    sample_strategy: SampleStrategy = .auto,
 };
 
 pub const Frame = struct {
@@ -227,6 +233,19 @@ fn allocFrame(allocator: std.mem.Allocator, columns: u32, rows: u32, color_mode:
     };
 }
 
+/// Build an integral-luma table for the monochrome hot path when it is worth it.
+/// Only monochrome modes can use it (color needs per-subcell linear RGB), and
+/// only when `shouldUseIntegral` says the build cost will be amortized.
+fn maybeBuildIntegral(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !?sample.IntegralLuma {
+    if (!sample.useIntegral(options.sample_strategy, image, terminal.color)) return null;
+    return try sample.IntegralLuma.build(allocator, image, terminal.background);
+}
+
 fn renderDensity(
     allocator: std.mem.Allocator,
     image: ImageView,
@@ -237,6 +256,10 @@ fn renderDensity(
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+
     const background = rgbFromBackground(terminal.background);
 
     var row: u32 = 0;
@@ -245,14 +268,19 @@ fn renderDensity(
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
             const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
-            const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
-            const adjusted = luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert);
-            frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
 
-            if (frame.color != .none) {
+            var lum: f32 = undefined;
+            if (frame.color == .none) {
+                lum = sample.regionLuma(image, terminal, integral, region);
+            } else {
+                const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                lum = s.luma;
                 frame.fg[idx] = s.rgb();
                 frame.bg[idx] = background;
             }
+
+            const adjusted = luma.applyAdjustments(lum, options.contrast, options.brightness, options.invert);
+            frame.codepoints[idx] = rampCodepoint(options.ramp, adjusted);
         }
     }
 
@@ -306,6 +334,10 @@ fn renderQuadrant(
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
@@ -321,8 +353,14 @@ fn renderQuadrant(
                 while (sx < 2) : (sx += 1) {
                     const sub_idx = sy * 2 + sx;
                     const region = sample.cellRegion(mapping, col, row, 2, 2, sx, sy);
-                    samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
-                    adjusted[sub_idx] = luma.applyAdjustments(samples[sub_idx].luma, options.contrast, options.brightness, options.invert);
+                    var l: f32 = undefined;
+                    if (frame.color == .none) {
+                        l = sample.regionLuma(image, terminal, integral, region);
+                    } else {
+                        samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                        l = samples[sub_idx].luma;
+                    }
+                    adjusted[sub_idx] = luma.applyAdjustments(l, options.contrast, options.brightness, options.invert);
                     sum += adjusted[sub_idx];
                 }
             }
@@ -361,6 +399,10 @@ fn renderBraille(
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
 
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+
     const background = rgbFromBackground(terminal.background);
 
     var row: u32 = 0;
@@ -377,12 +419,19 @@ fn renderBraille(
                 var sx: u32 = 0;
                 while (sx < 2) : (sx += 1) {
                     const region = sample.cellRegion(mapping, col, row, 2, 4, sx, sy);
-                    const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
-                    const adjusted = luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert);
-                    if (adjusted >= dither.threshold(options.dither, col * 2 + sx, row * 4 + sy)) {
-                        mask |= symbol.brailleDotMask(sx, sy);
-                        on_buf[on_count] = s.linear;
-                        on_count += 1;
+                    const dither_threshold = dither.threshold(options.dither, col * 2 + sx, row * 4 + sy);
+                    if (frame.color == .none) {
+                        const l = sample.regionLuma(image, terminal, integral, region);
+                        if (luma.applyAdjustments(l, options.contrast, options.brightness, options.invert) >= dither_threshold) {
+                            mask |= symbol.brailleDotMask(sx, sy);
+                        }
+                    } else {
+                        const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                        if (luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert) >= dither_threshold) {
+                            mask |= symbol.brailleDotMask(sx, sy);
+                            on_buf[on_count] = s.linear;
+                            on_count += 1;
+                        }
                     }
                 }
             }
@@ -751,6 +800,49 @@ test "quadrant renderer is rejected for ascii-only terminals" {
         .{ .columns = 1, .rows = 1, .color = .none, .symbols = .ascii_only },
         .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
     ));
+}
+
+test "integral_luma sampling matches direct_box for monochrome modes" {
+    const allocator = std.testing.allocator;
+
+    // A non-trivial gradient-ish image so cells average several pixels.
+    var pixels: [8 * 8]Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 8);
+        const y: u8 = @intCast(i / 8);
+        p.* = .{ .r = x * 30, .g = y * 30, .b = @intCast((@as(u32, x) * y) % 256), .a = 255 };
+    }
+    const image = ImageView{ .width = 8, .height = 8, .stride = 8 * @sizeOf(Rgba8), .pixels = &pixels };
+    const terminal = TerminalProfile{ .columns = 3, .rows = 3, .color = .none };
+
+    const modes = [_]Options{
+        .{ .mode = .density, .fit = .stretch },
+        .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
+        .{ .mode = .braille, .fit = .stretch },
+    };
+    const braille_terminal = TerminalProfile{ .columns = 3, .rows = 3, .color = .none, .symbols = .braille };
+
+    for (modes) |base| {
+        const term = if (base.mode == .braille) braille_terminal else terminal;
+
+        var direct = try renderToCells(allocator, image, term, .{
+            .mode = base.mode,
+            .partition = base.partition,
+            .fit = base.fit,
+            .sample_strategy = .direct_box,
+        });
+        defer direct.deinit(allocator);
+
+        var integral = try renderToCells(allocator, image, term, .{
+            .mode = base.mode,
+            .partition = base.partition,
+            .fit = base.fit,
+            .sample_strategy = .integral_luma,
+        });
+        defer integral.deinit(allocator);
+
+        try std.testing.expectEqualSlices(u21, direct.codepoints, integral.codepoints);
+    }
 }
 
 test "braille renderer requires braille symbol capability" {

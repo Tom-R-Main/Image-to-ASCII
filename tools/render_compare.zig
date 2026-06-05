@@ -30,6 +30,7 @@ const Options = struct {
     fit: ascii.FitMode = .contain,
     dither: ascii.DitherMode = .none,
     stat: ascii.ColorStat = .trimmed_mean,
+    strategy: ascii.SampleStrategy = .auto,
     write_recon: ?[]const u8 = null,
     write_ref: ?[]const u8 = null,
 };
@@ -84,6 +85,7 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
         .fit = options.fit,
         .dither = options.dither,
         .color_stat = options.stat,
+        .sample_strategy = options.strategy,
     };
 
     var frame = try ascii.renderToCells(allocator, image, terminal, render_options);
@@ -155,6 +157,8 @@ fn parseArgs(args: []const []const u8) !Options {
             options.dither = parseDither(try value(args, &i)) orelse return error.InvalidDither;
         } else if (std.mem.eql(u8, arg, "--stat")) {
             options.stat = parseStat(try value(args, &i)) orelse return error.InvalidStat;
+        } else if (std.mem.eql(u8, arg, "--strategy")) {
+            options.strategy = parseStrategy(try value(args, &i)) orelse return error.InvalidStrategy;
         } else if (std.mem.eql(u8, arg, "--write-recon")) {
             options.write_recon = try value(args, &i);
         } else if (std.mem.eql(u8, arg, "--write-ref")) {
@@ -219,6 +223,13 @@ fn parseStat(v: []const u8) ?ascii.ColorStat {
     return null;
 }
 
+fn parseStrategy(v: []const u8) ?ascii.SampleStrategy {
+    if (std.mem.eql(u8, v, "auto")) return .auto;
+    if (std.mem.eql(u8, v, "direct")) return .direct_box;
+    if (std.mem.eql(u8, v, "integral")) return .integral_luma;
+    return null;
+}
+
 fn argsContain(args: []const []const u8, needle: []const u8) bool {
     for (args) |arg| {
         if (std.mem.eql(u8, arg, needle)) return true;
@@ -240,6 +251,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --fit contain|cover|stretch
         \\  --dither none|ordered-2x2|ordered-4x4
         \\  --stat mean|trimmed|median  representative-color policy
+        \\  --strategy auto|direct|integral  sampler (integral = monochrome SAT)
         \\  --write-recon out.ppm       write the reconstructed image
         \\  --write-ref out.ppm         write the resized reference image
         \\  --help

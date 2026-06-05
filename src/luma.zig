@@ -34,9 +34,14 @@ pub fn luminanceLinear(r: f32, g: f32, b: f32) f32 {
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/// Apply the perceptual (gamma 2.2) curve to a linear luminance value. Shared by
+/// the direct sampler and the integral sampler so both index the ramp the same.
+pub fn perceptualGamma(linear_luma: f32) f32 {
+    return std.math.pow(f32, std.math.clamp(linear_luma, 0.0, 1.0), 1.0 / 2.2);
+}
+
 pub fn perceptualLuminance(r: f32, g: f32, b: f32) f32 {
-    const y = luminanceLinear(r, g, b);
-    return std.math.pow(f32, std.math.clamp(y, 0.0, 1.0), 1.0 / 2.2);
+    return perceptualGamma(luminanceLinear(r, g, b));
 }
 
 pub fn applyAdjustments(value: f32, contrast: f32, brightness: f32, invert: bool) f32 {

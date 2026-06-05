@@ -2,7 +2,52 @@ const std = @import("std");
 
 const color = @import("color.zig");
 const core = @import("core.zig");
+const integral = @import("integral.zig");
 const luma = @import("luma.zig");
+
+pub const IntegralLuma = integral.IntegralLuma;
+
+pub const SampleStrategy = enum {
+    /// Choose per the pixel-visit threshold (currently: always direct for
+    /// one-shot, because building an integral image is itself an O(image) pass
+    /// and only pays off when reused across renders).
+    auto,
+    /// Exact per-cell area weighting. The reference path.
+    direct_box,
+    /// Integral-image (summed-area table) luma sampling. O(1) per cell after an
+    /// O(image) build. Monochrome only; intended for reuse (e.g. live resize).
+    integral_luma,
+};
+
+/// Building the integral table is an O(image) pass, so for a single one-shot
+/// render it is at best a wash; only reuse across multiple renders (live resize)
+/// amortizes it. `auto` therefore stays on the direct sampler until a reuse path
+/// exists. The threshold is in source pixels for future opt-in.
+pub const integral_pixel_threshold: usize = std.math.maxInt(usize);
+
+/// Decide whether to build/use the integral luma table. Color modes always use
+/// the direct sampler because the luma table cannot reconstruct per-subcell RGB.
+pub fn useIntegral(strategy: SampleStrategy, image: core.ImageView, color_mode: core.ColorMode) bool {
+    if (color_mode != .none) return false;
+    return switch (strategy) {
+        .direct_box => false,
+        .integral_luma => true,
+        .auto => (@as(usize, image.width) * @as(usize, image.height)) >= integral_pixel_threshold,
+    };
+}
+
+/// Average perceptual luma over a source region, via the integral table when
+/// provided, otherwise the direct area sampler. Both produce the same value to
+/// floating-point rounding (see integral.zig).
+pub fn regionLuma(
+    image: core.ImageView,
+    terminal: core.TerminalProfile,
+    table: ?*const IntegralLuma,
+    region: [4]f32,
+) f32 {
+    if (table) |t| return t.regionLuma(region[0], region[1], region[2], region[3]);
+    return areaSample(image, terminal, region[0], region[1], region[2], region[3]).luma;
+}
 
 pub const Size = struct {
     columns: u32,
