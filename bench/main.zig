@@ -195,7 +195,7 @@ fn runCase(
         .p95_ns = timings[(timings.len * 95 + 99) / 100 - 1],
         .ns_per_cell = ns_per_iter / cells,
         .cells_per_sec = if (ns_per_iter == 0) 0 else (cells * std.time.ns_per_s) / ns_per_iter,
-        .allocated_bytes = allocatedBytes(bench_case.kind, out_w, out_h, bench_case.color),
+        .allocated_bytes = allocatedBytes(bench_case, out_w, out_h),
         .ansi_bytes = if (bench_case.kind == .render_writer or bench_case.kind == .ansi_encode_only) bytes else 0,
     };
 }
@@ -248,14 +248,35 @@ fn qualityProxy(frame: ascii.Frame) u64 {
     return hash;
 }
 
-fn allocatedBytes(kind: BenchKind, columns: u32, rows: u32, color_mode: ascii.ColorMode) u64 {
-    return switch (kind) {
+fn allocatedBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
+    return switch (bench_case.kind) {
         .ansi_encode_only, .quality_compare_only => 0,
         else => {
             const cells = @as(u64, columns) * rows;
             const codepoint_bytes = cells * @sizeOf(u21);
-            const color_bytes = if (color_mode == .none) 0 else cells * 2 * @sizeOf(ascii.Rgb8);
-            return codepoint_bytes + color_bytes;
+            const color_bytes = if (bench_case.color == .none) 0 else cells * 2 * @sizeOf(ascii.Rgb8);
+            return codepoint_bytes + color_bytes + samplePlanBytes(bench_case, columns, rows);
+        },
+    };
+}
+
+fn samplePlanBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
+    const subcells = subcellShape(bench_case);
+    const spans = @as(u64, columns) * subcells.x + @as(u64, rows) * subcells.y;
+    return spans * @sizeOf(ascii.AxisSpan);
+}
+
+fn subcellShape(bench_case: BenchCase) struct { x: u64, y: u64 } {
+    return switch (bench_case.mode) {
+        .density, .glyph_tone => .{ .x = 1, .y = 1 },
+        .glyph_structure => .{ .x = ascii.default_glyph_cell_width, .y = ascii.default_glyph_cell_height },
+        .braille => .{ .x = 2, .y = 4 },
+        .partition => switch (bench_case.partition) {
+            .density_1x1 => .{ .x = 1, .y = 1 },
+            .half_1x2 => .{ .x = 1, .y = 2 },
+            .quadrant_2x2 => .{ .x = 2, .y = 2 },
+            .sextant_2x3 => .{ .x = 2, .y = 3 },
+            .octant_2x4 => .{ .x = 2, .y = 4 },
         },
     };
 }
@@ -311,6 +332,7 @@ fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResu
         \\    "cpu_arch": "{s}"
         \\  }},
         \\  "benchmark": {{
+        \\    "sampler": "span_precompute",
         \\    "input_width": {d},
         \\    "input_height": {d},
         \\    "output_columns": {d},

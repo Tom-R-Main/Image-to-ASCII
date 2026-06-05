@@ -79,6 +79,72 @@ pub const Sample = struct {
     }
 };
 
+pub const AxisSpan = struct {
+    start: u32,
+    end: u32,
+    lo: f32,
+    hi: f32,
+    first_weight: f32,
+    last_weight: f32,
+
+    fn weight(self: AxisSpan, pixel: u32) f32 {
+        if (self.end <= self.start) return 0.0;
+        if (self.end == self.start + 1) return self.hi - self.lo;
+        if (pixel == self.start) return self.first_weight;
+        if (pixel == self.end - 1) return self.last_weight;
+        return 1.0;
+    }
+};
+
+pub const SamplePlan = struct {
+    mapping: Mapping,
+    subcells_x: u32,
+    subcells_y: u32,
+    x_spans: []AxisSpan,
+    y_spans: []AxisSpan,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        image: core.ImageView,
+        mapping: Mapping,
+        subcells_x: u32,
+        subcells_y: u32,
+    ) !SamplePlan {
+        const virtual_w = try std.math.mul(usize, mapping.columns, subcells_x);
+        const virtual_h = try std.math.mul(usize, mapping.rows, subcells_y);
+
+        const x_spans = try allocator.alloc(AxisSpan, virtual_w);
+        errdefer allocator.free(x_spans);
+        const y_spans = try allocator.alloc(AxisSpan, virtual_h);
+        errdefer allocator.free(y_spans);
+
+        fillSpans(x_spans, mapping.src_x0, mapping.src_x1, image.width);
+        fillSpans(y_spans, mapping.src_y0, mapping.src_y1, image.height);
+
+        return .{
+            .mapping = mapping,
+            .subcells_x = subcells_x,
+            .subcells_y = subcells_y,
+            .x_spans = x_spans,
+            .y_spans = y_spans,
+        };
+    }
+
+    pub fn deinit(self: *SamplePlan, allocator: std.mem.Allocator) void {
+        allocator.free(self.x_spans);
+        allocator.free(self.y_spans);
+        self.* = undefined;
+    }
+
+    pub fn xSpan(self: SamplePlan, cell_x: u32, sub_x: u32) AxisSpan {
+        return self.x_spans[cell_x * self.subcells_x + sub_x];
+    }
+
+    pub fn ySpan(self: SamplePlan, cell_y: u32, sub_y: u32) AxisSpan {
+        return self.y_spans[cell_y * self.subcells_y + sub_y];
+    }
+};
+
 pub fn fittedSize(image: core.ImageView, terminal: core.TerminalProfile, fit: core.FitMode) Size {
     const mapping = fitMapping(image, terminal, fit);
     return .{ .columns = mapping.columns, .rows = mapping.rows };
@@ -203,6 +269,56 @@ pub fn areaSample(
     };
 }
 
+pub fn areaSampleSpans(
+    image: core.ImageView,
+    terminal: core.TerminalProfile,
+    x_span: AxisSpan,
+    y_span: AxisSpan,
+) Sample {
+    var accum = color.LinearRgb{ .r = 0.0, .g = 0.0, .b = 0.0 };
+    var weight_sum: f32 = 0.0;
+
+    var y = y_span.start;
+    while (y < y_span.end) : (y += 1) {
+        const y_weight = y_span.weight(y);
+        if (y_weight == 0.0) continue;
+
+        var x = x_span.start;
+        while (x < x_span.end) : (x += 1) {
+            const weight = x_span.weight(x) * y_weight;
+            if (weight == 0.0) continue;
+
+            const rgb = color.compositeOver(pixelAt(image, x, y), terminal.background);
+            accum.r += rgb.r * weight;
+            accum.g += rgb.g * weight;
+            accum.b += rgb.b * weight;
+            weight_sum += weight;
+        }
+    }
+
+    if (weight_sum > 0.0) {
+        accum.r /= weight_sum;
+        accum.g /= weight_sum;
+        accum.b /= weight_sum;
+    }
+
+    return .{
+        .linear = accum,
+        .luma = luma.perceptualLuminance(accum.r, accum.g, accum.b),
+    };
+}
+
+pub fn regionLumaSpans(
+    image: core.ImageView,
+    terminal: core.TerminalProfile,
+    table: ?*const IntegralLuma,
+    x_span: AxisSpan,
+    y_span: AxisSpan,
+) f32 {
+    if (table) |t| return t.regionLuma(x_span.lo, y_span.lo, x_span.hi, y_span.hi);
+    return areaSampleSpans(image, terminal, x_span, y_span).luma;
+}
+
 pub fn cellRegion(mapping: Mapping, cell_x: u32, cell_y: u32, sx: u32, sy: u32, sub_x: u32, sub_y: u32) [4]f32 {
     const virtual_w = mapping.columns * sx;
     const virtual_h = mapping.rows * sy;
@@ -218,6 +334,42 @@ pub fn cellRegion(mapping: Mapping, cell_x: u32, cell_y: u32, sx: u32, sy: u32, 
     const y1 = mapping.src_y0 + (@as(f32, @floatFromInt(vy + 1)) * span_y) / @as(f32, @floatFromInt(virtual_h));
 
     return .{ x0, y0, x1, y1 };
+}
+
+fn fillSpans(spans: []AxisSpan, src_0: f32, src_1: f32, source_len: u32) void {
+    const span = src_1 - src_0;
+    const virtual_len = @as(f32, @floatFromInt(spans.len));
+    for (spans, 0..) |*out, i| {
+        const i_f = @as(f32, @floatFromInt(i));
+        out.* = axisSpan(
+            source_len,
+            src_0 + (i_f * span) / virtual_len,
+            src_0 + ((i_f + 1.0) * span) / virtual_len,
+        );
+    }
+}
+
+fn axisSpan(source_len: u32, lo: f32, hi: f32) AxisSpan {
+    const source_len_f = @as(f32, @floatFromInt(source_len));
+    const clamped_lo = std.math.clamp(lo, 0.0, source_len_f);
+    const clamped_hi = std.math.clamp(hi, clamped_lo, source_len_f);
+
+    const start: u32 = @intFromFloat(@floor(clamped_lo));
+    const unclipped_end: u32 = @max(start + 1, @as(u32, @intFromFloat(@ceil(clamped_hi))));
+    const end = @min(unclipped_end, source_len);
+    const effective_start = @min(start, source_len - 1);
+    const effective_end = @max(effective_start + 1, end);
+    const first_hi = @min(@as(f32, @floatFromInt(effective_start + 1)), clamped_hi);
+    const last_lo = @max(@as(f32, @floatFromInt(effective_end - 1)), clamped_lo);
+
+    return .{
+        .start = effective_start,
+        .end = effective_end,
+        .lo = clamped_lo,
+        .hi = clamped_hi,
+        .first_weight = @max(0.0, first_hi - clamped_lo),
+        .last_weight = @max(0.0, clamped_hi - last_lo),
+    };
 }
 
 fn pixelAt(image: core.ImageView, x: u32, y: u32) core.Rgba8 {
@@ -281,4 +433,60 @@ test "area sample averages tiny image in linear light" {
     );
 
     try std.testing.expect(s.rgb().r > 180 and s.rgb().r < 190);
+}
+
+test "sample plan spans match cell regions" {
+    const allocator = std.testing.allocator;
+    const pixels = [_]core.Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
+    const image = core.ImageView{ .width = 17, .height = 11, .stride = @sizeOf(core.Rgba8), .pixels = &pixels };
+    const mapping = fitMapping(image, .{ .columns = 5, .rows = 3 }, .stretch);
+
+    var plan = try SamplePlan.init(allocator, image, mapping, 2, 4);
+    defer plan.deinit(allocator);
+
+    const region = cellRegion(mapping, 3, 2, 2, 4, 1, 3);
+    const xs = plan.xSpan(3, 1);
+    const ys = plan.ySpan(2, 3);
+
+    try std.testing.expectApproxEqAbs(region[0], xs.lo, 0.0001);
+    try std.testing.expectApproxEqAbs(region[2], xs.hi, 0.0001);
+    try std.testing.expectApproxEqAbs(region[1], ys.lo, 0.0001);
+    try std.testing.expectApproxEqAbs(region[3], ys.hi, 0.0001);
+}
+
+test "span sampler matches direct area sampler" {
+    const allocator = std.testing.allocator;
+    var pixels: [7 * 5]core.Rgba8 = undefined;
+    for (&pixels, 0..) |*p, i| {
+        const x: u8 = @intCast(i % 7);
+        const y: u8 = @intCast(i / 7);
+        p.* = .{ .r = x * 31, .g = y * 47, .b = x * y * 9, .a = 255 };
+    }
+    const image = core.ImageView{ .width = 7, .height = 5, .stride = 7 * @sizeOf(core.Rgba8), .pixels = &pixels };
+    const terminal = core.TerminalProfile{ .columns = 3, .rows = 2 };
+    const mapping = fitMapping(image, terminal, .cover);
+
+    var plan = try SamplePlan.init(allocator, image, mapping, 4, 3);
+    defer plan.deinit(allocator);
+
+    var cell_y: u32 = 0;
+    while (cell_y < mapping.rows) : (cell_y += 1) {
+        var cell_x: u32 = 0;
+        while (cell_x < mapping.columns) : (cell_x += 1) {
+            var sub_y: u32 = 0;
+            while (sub_y < 3) : (sub_y += 1) {
+                var sub_x: u32 = 0;
+                while (sub_x < 4) : (sub_x += 1) {
+                    const region = cellRegion(mapping, cell_x, cell_y, 4, 3, sub_x, sub_y);
+                    const direct = areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                    const planned = areaSampleSpans(image, terminal, plan.xSpan(cell_x, sub_x), plan.ySpan(cell_y, sub_y));
+
+                    try std.testing.expectApproxEqAbs(direct.linear.r, planned.linear.r, 0.0001);
+                    try std.testing.expectApproxEqAbs(direct.linear.g, planned.linear.g, 0.0001);
+                    try std.testing.expectApproxEqAbs(direct.linear.b, planned.linear.b, 0.0001);
+                    try std.testing.expectApproxEqAbs(direct.luma, planned.luma, 0.0001);
+                }
+            }
+        }
+    }
 }

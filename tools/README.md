@@ -11,12 +11,16 @@ image from the resulting cells, and scores it against the source with PSNR,
 windowed SSIM, and a Sobel edge-correlation proxy.
 
 ```sh
+zig build compare
+
 zig build compare -- --input testdata/color-bars.ppm \
     --width 80 --height 40 \
     --mode partition --partition quadrant --color truecolor \
     --fit contain --stat median \
     --write-recon recon.ppm --write-ref ref.ppm
 ```
+
+The no-arg command uses `testdata/color-bars.ppm` as a smoke fixture.
 
 Reconstruction is faithful for the block and Braille families because their
 glyph masks are known, so the harness needs **no font rasterizer**. Density and

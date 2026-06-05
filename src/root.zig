@@ -1,5 +1,6 @@
 const core = @import("core.zig");
 
+pub const AxisSpan = core.AxisSpan;
 pub const ColorMode = core.ColorMode;
 pub const ColorStat = core.ColorStat;
 pub const DitherMode = core.DitherMode;
@@ -14,6 +15,7 @@ pub const PrepareOptions = core.PrepareOptions;
 pub const Quality = core.Quality;
 pub const RenderMode = core.RenderMode;
 pub const SampleStrategy = core.SampleStrategy;
+pub const SamplePlan = core.SamplePlan;
 pub const RenderError = core.RenderError;
 pub const Rgb8 = core.Rgb8;
 pub const Rgba8 = core.Rgba8;

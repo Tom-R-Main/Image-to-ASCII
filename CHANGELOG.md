@@ -33,6 +33,19 @@
 - Added `PreparedImage`, `prepareImage`, and `renderPreparedToCells` so callers
   can build the integral-luma table once and reuse it across output sizes. The
   benchmark matrix now tracks this reuse path separately from one-shot rendering.
+- Added `AxisSpan` / `SamplePlan` source sampling span precomputation. Renderers
+  now build shape-specific x/y span arrays for their virtual subcell grids
+  (`1x1`, `1x2`, `2x2`, `2x4`, or the calibrated `8x16` glyph grid) and consume
+  them via a span-based direct-box sampler. The old direct sampler remains as the
+  reference path; unit coverage proves span parity to `0.0001`. ReleaseFast
+  comparison against `bench/results/baseline.json` is tracked in
+  `bench/results/span-precompute.json`; the largest measured wins in this run are
+  density mono (-29.60%), glyph-structure truecolor (-12.10%),
+  glyph-structure mono (-10.23%), quadrant mono (-8.76%), and Braille truecolor
+  (-7.82%). Half-block truecolor (+4.74%), quadrant truecolor (+6.22%), Braille
+  mono (+11.59%), and prepared integral-luma (+30.98%) are current regressions,
+  mostly reflecting span-plan allocation overhead and benchmark noise in smaller
+  rows.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

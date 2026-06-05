@@ -11,7 +11,9 @@ const symbol = @import("symbol.zig");
 
 pub const Rgba8 = pixel.Rgba8;
 pub const Rgb8 = pixel.Rgb8;
+pub const AxisSpan = sample.AxisSpan;
 pub const ColorStat = color.ColorStat;
+pub const SamplePlan = sample.SamplePlan;
 pub const SampleStrategy = sample.SampleStrategy;
 
 pub const ValidationError = error{
@@ -366,6 +368,8 @@ fn renderDensity(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, 1, 1);
+    defer plan.deinit(allocator);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -378,13 +382,14 @@ fn renderDensity(
         var col: u32 = 0;
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
-            const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
+            const xs = plan.xSpan(col, 0);
+            const ys = plan.ySpan(row, 0);
 
             var lum: f32 = undefined;
             if (frame.color == .none) {
-                lum = sample.regionLuma(image, terminal, integral, region);
+                lum = sample.regionLumaSpans(image, terminal, integral, xs, ys);
             } else {
-                const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                const s = sample.areaSampleSpans(image, terminal, xs, ys);
                 lum = s.luma;
                 frame.fg[idx] = s.rgb();
                 frame.bg[idx] = background;
@@ -408,6 +413,8 @@ fn renderGlyphTone(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, 1, 1);
+    defer plan.deinit(allocator);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -421,13 +428,14 @@ fn renderGlyphTone(
         var col: u32 = 0;
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
-            const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
+            const xs = plan.xSpan(col, 0);
+            const ys = plan.ySpan(row, 0);
 
             var lum: f32 = undefined;
             if (frame.color == .none) {
-                lum = sample.regionLuma(image, terminal, integral, region);
+                lum = sample.regionLumaSpans(image, terminal, integral, xs, ys);
             } else {
-                const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                const s = sample.areaSampleSpans(image, terminal, xs, ys);
                 lum = s.luma;
                 frame.fg[idx] = s.rgb();
                 frame.bg[idx] = background;
@@ -451,6 +459,8 @@ fn renderGlyphStructure(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, glyph.cell_width, glyph.cell_height);
+    defer plan.deinit(allocator);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -463,12 +473,12 @@ fn renderGlyphStructure(
         var col: u32 = 0;
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
-            var cell = sampleGlyphStructureCell(image, terminal, integral, mapping, col, row, options);
+            var cell = sampleGlyphStructureCell(image, terminal, integral, plan, col, row, options);
             const selected = selectStructuredGlyph(atlas, &cell.values, cell.binary_mask, cell.features, options.quality);
             frame.codepoints[idx] = selected.codepoint;
 
             if (frame.color != .none) {
-                assignGlyphStructureColors(&frame, idx, image, terminal, mapping, col, row, selected, options);
+                assignGlyphStructureColors(&frame, idx, image, terminal, plan, col, row, selected, options);
             }
         }
     }
@@ -487,16 +497,17 @@ fn renderHalfBlock(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, 1, 2);
+    defer plan.deinit(allocator);
 
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
         while (col < mapping.columns) : (col += 1) {
             const idx = @as(usize, row) * mapping.columns + col;
-            const top_region = sample.cellRegion(mapping, col, row, 1, 2, 0, 0);
-            const bottom_region = sample.cellRegion(mapping, col, row, 1, 2, 0, 1);
-            const top = sample.areaSample(image, terminal, top_region[0], top_region[1], top_region[2], top_region[3]);
-            const bottom = sample.areaSample(image, terminal, bottom_region[0], bottom_region[1], bottom_region[2], bottom_region[3]);
+            const xs = plan.xSpan(col, 0);
+            const top = sample.areaSampleSpans(image, terminal, xs, plan.ySpan(row, 0));
+            const bottom = sample.areaSampleSpans(image, terminal, xs, plan.ySpan(row, 1));
 
             if (frame.color == .none) {
                 frame.codepoints[idx] = halfBlockMonoCodepoint(top.luma, bottom.luma, options);
@@ -523,6 +534,8 @@ fn renderQuadrant(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, 2, 2);
+    defer plan.deinit(allocator);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -542,12 +555,13 @@ fn renderQuadrant(
                 var sx: u32 = 0;
                 while (sx < 2) : (sx += 1) {
                     const sub_idx = sy * 2 + sx;
-                    const region = sample.cellRegion(mapping, col, row, 2, 2, sx, sy);
+                    const xs = plan.xSpan(col, sx);
+                    const ys = plan.ySpan(row, sy);
                     var l: f32 = undefined;
                     if (frame.color == .none) {
-                        l = sample.regionLuma(image, terminal, integral, region);
+                        l = sample.regionLumaSpans(image, terminal, integral, xs, ys);
                     } else {
-                        samples[sub_idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                        samples[sub_idx] = sample.areaSampleSpans(image, terminal, xs, ys);
                         l = samples[sub_idx].luma;
                     }
                     adjusted[sub_idx] = luma.applyAdjustments(l, options.contrast, options.brightness, options.invert);
@@ -589,6 +603,8 @@ fn renderBraille(
     const mapping = sample.fitMapping(image, terminal, options.fit);
     var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
     errdefer frame.deinit(allocator);
+    var plan = try sample.SamplePlan.init(allocator, image, mapping, 2, 4);
+    defer plan.deinit(allocator);
 
     var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options, context);
     defer if (integral_opt) |*it| it.deinit(allocator);
@@ -609,15 +625,16 @@ fn renderBraille(
             while (sy < 4) : (sy += 1) {
                 var sx: u32 = 0;
                 while (sx < 2) : (sx += 1) {
-                    const region = sample.cellRegion(mapping, col, row, 2, 4, sx, sy);
+                    const xs = plan.xSpan(col, sx);
+                    const ys = plan.ySpan(row, sy);
                     const dither_threshold = dither.threshold(options.dither, col * 2 + sx, row * 4 + sy);
                     if (frame.color == .none) {
-                        const l = sample.regionLuma(image, terminal, integral, region);
+                        const l = sample.regionLumaSpans(image, terminal, integral, xs, ys);
                         if (luma.applyAdjustments(l, options.contrast, options.brightness, options.invert) >= dither_threshold) {
                             mask |= symbol.brailleDotMask(sx, sy);
                         }
                     } else {
-                        const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+                        const s = sample.areaSampleSpans(image, terminal, xs, ys);
                         if (luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert) >= dither_threshold) {
                             mask |= symbol.brailleDotMask(sx, sy);
                             on_buf[on_count] = s.linear;
@@ -686,7 +703,7 @@ fn sampleGlyphStructureCell(
     image: ImageView,
     terminal: TerminalProfile,
     integral: ?*const sample.IntegralLuma,
-    mapping: sample.Mapping,
+    plan: sample.SamplePlan,
     col: u32,
     row: u32,
     options: Options,
@@ -699,8 +716,7 @@ fn sampleGlyphStructureCell(
         var sx: u32 = 0;
         while (sx < glyph.cell_width) : (sx += 1) {
             const i = @as(usize, sy) * glyph.cell_width + sx;
-            const region = sample.cellRegion(mapping, col, row, glyph.cell_width, glyph.cell_height, sx, sy);
-            const raw = sample.regionLuma(image, terminal, integral, region);
+            const raw = sample.regionLumaSpans(image, terminal, integral, plan.xSpan(col, sx), plan.ySpan(row, sy));
             const adjusted = luma.applyAdjustments(raw, options.contrast, options.brightness, options.invert);
             values[i] = adjusted;
             sum += adjusted;
@@ -964,7 +980,7 @@ fn assignGlyphStructureColors(
     idx: usize,
     image: ImageView,
     terminal: TerminalProfile,
-    mapping: sample.Mapping,
+    plan: sample.SamplePlan,
     col: u32,
     row: u32,
     selected: glyph.Glyph,
@@ -980,8 +996,7 @@ fn assignGlyphStructureColors(
     while (sy < glyph.cell_height) : (sy += 1) {
         var sx: u32 = 0;
         while (sx < glyph.cell_width) : (sx += 1) {
-            const region = sample.cellRegion(mapping, col, row, glyph.cell_width, glyph.cell_height, sx, sy);
-            const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+            const s = sample.areaSampleSpans(image, terminal, plan.xSpan(col, sx), plan.ySpan(row, sy));
             if (atlas.maskBit(selected, sx, sy)) {
                 fg_buf[fg_count] = s.linear;
                 fg_count += 1;
@@ -993,7 +1008,7 @@ fn assignGlyphStructureColors(
     }
 
     if (fg_count == 0) {
-        const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
+        const region = sample.cellRegion(plan.mapping, col, row, 1, 1, 0, 0);
         frame.fg[idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]).rgb();
     } else {
         frame.fg[idx] = color.encodeSrgb(color.representative(fg_buf[0..fg_count], options.color_stat));

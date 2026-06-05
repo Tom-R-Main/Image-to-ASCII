@@ -679,6 +679,7 @@ Must include:
 - render-kernel matrix with median and p95 timing,
 - ANSI encode-only measurement,
 - prepared-image / render-context seam for reusable luma precomputation,
+- source sampling span precomputation benchmarked against the baseline artifact,
 - quality ratchet hooks before more glyph tuning.
 
 ### `v0.3.0`: Glyph-Tone
@@ -734,8 +735,7 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Use `bench/results/baseline.json` as the current v0.2 performance baseline.
-2. Add span precomputation for source sampling and compare against this baseline.
-3. Add a render-into/frame-reuse API once the sampler hot loop is measured.
-4. Expand the quality corpus before deeper glyph-structure pruning.
-5. Keep PNG/JPEG adapter work outside core after the performance lab is stable.
+1. Investigate span regressions in half-block truecolor, quadrant truecolor, Braille mono, and prepared integral-luma before wider specialization.
+2. Add a render-into/frame-reuse API once the sampler hot loop is measured.
+3. Expand the quality corpus before deeper glyph-structure pruning.
+4. Keep PNG/JPEG adapter work outside core after the performance lab is stable.

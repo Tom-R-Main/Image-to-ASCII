@@ -20,8 +20,10 @@ const common = @import("common.zig");
 const metrics = @import("metrics.zig");
 const reconstruct = @import("reconstruct.zig");
 
+const default_input = "testdata/color-bars.ppm";
+
 const Options = struct {
-    input_path: ?[]const u8 = null,
+    input_path: ?[]const u8 = default_input,
     width: u32 = 80,
     height: u32 = 40,
     mode: ascii.RenderMode = .partition,
@@ -241,10 +243,10 @@ fn argsContain(args: []const []const u8, needle: []const u8) bool {
 
 fn writeUsage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
-        \\usage: render_compare --input path.ppm [options]
+        \\usage: render_compare [--input path.ppm] [options]
         \\
         \\options:
-        \\  --input path.ppm|path.pam   (required)
+        \\  --input path.ppm|path.pam   input fixture (default testdata/color-bars.ppm)
         \\  --width N                   output columns (default 80)
         \\  --height N                  output rows (default 40)
         \\  --mode density|partition|braille|glyph-tone|glyph-structure
