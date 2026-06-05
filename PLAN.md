@@ -516,6 +516,11 @@ tools/calibrate_font.zig
 
 Purpose: build the long-term differentiator after metrics exist.
 
+Status: baseline implemented. The current path samples cells at the calibrated
+8x16 atlas grid, prefilters by coverage, scores packed masks with small offset
+tolerance, and falls back to glyph-tone for low-contrast cells. The remaining
+work is scorer refinement, broader corpus coverage, and performance tuning.
+
 ### Files
 
 ```text

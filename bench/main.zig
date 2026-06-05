@@ -17,6 +17,8 @@ const BenchCase = struct {
 const cases = [_]BenchCase{
     .{ .name = "density-none", .mode = .density, .partition = .density_1x1, .color = .none },
     .{ .name = "density-truecolor", .mode = .density, .partition = .density_1x1, .color = .truecolor },
+    .{ .name = "glyph-tone-none", .mode = .glyph_tone, .partition = .density_1x1, .color = .none },
+    .{ .name = "glyph-structure-none", .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .none },
     .{ .name = "half-truecolor", .mode = .partition, .partition = .half_1x2, .color = .truecolor },
     .{ .name = "quadrant-none", .mode = .partition, .partition = .quadrant_2x2, .color = .none },
     .{ .name = "quadrant-truecolor", .synthetic = .color_mix, .mode = .partition, .partition = .quadrant_2x2, .color = .truecolor },
@@ -75,7 +77,7 @@ fn runCase(
         .columns = out_w,
         .rows = out_h,
         .color = case.color,
-        .symbols = if (case.mode == .braille) .braille else .block_basic,
+        .symbols = if (case.mode == .braille) .braille else if (case.mode == .glyph_structure) .glyphs else .block_basic,
     };
     const options = ascii.Options{
         .mode = case.mode,

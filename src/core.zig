@@ -188,7 +188,7 @@ pub fn renderToCells(
         },
         .braille => renderBraille(allocator, image, terminal, options),
         .glyph_tone => renderGlyphTone(allocator, image, terminal, options),
-        else => Error.UnsupportedRenderMode,
+        .glyph_structure => renderGlyphStructure(allocator, image, terminal, options),
     };
 }
 
@@ -202,6 +202,13 @@ pub fn defaultGlyphCoverage(codepoint: u21) ?f32 {
 pub fn defaultGlyphTone(codepoint: u21) ?f32 {
     return glyph.defaultTone(codepoint);
 }
+
+pub fn defaultGlyphMaskBit(codepoint: u21, x: u32, y: u32) ?bool {
+    return glyph.defaultMaskBit(codepoint, x, y);
+}
+
+pub const default_glyph_cell_width = glyph.cell_width;
+pub const default_glyph_cell_height = glyph.cell_height;
 
 pub fn renderToWriter(
     writer: *std.Io.Writer,
@@ -337,6 +344,40 @@ fn renderGlyphTone(
 
             const adjusted = luma.applyAdjustments(lum, options.contrast, options.brightness, options.invert);
             frame.codepoints[idx] = atlas.selectByTone(adjusted);
+        }
+    }
+
+    return frame;
+}
+
+fn renderGlyphStructure(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+) !Frame {
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    var frame = try allocFrame(allocator, mapping.columns, mapping.rows, terminal.color);
+    errdefer frame.deinit(allocator);
+
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, options);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral: ?*const sample.IntegralLuma = if (integral_opt) |*it| it else null;
+
+    const atlas = glyph.defaultAtlas();
+
+    var row: u32 = 0;
+    while (row < mapping.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
+            var cell = sampleGlyphStructureCell(image, terminal, integral, mapping, col, row, options);
+            const selected = selectStructuredGlyph(atlas, &cell.values, cell.features, options.quality);
+            frame.codepoints[idx] = selected.codepoint;
+
+            if (frame.color != .none) {
+                assignGlyphStructureColors(&frame, idx, image, terminal, mapping, col, row, selected, options);
+            }
         }
     }
 
@@ -528,6 +569,308 @@ fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
         .none, .floyd_steinberg => avg,
         .ordered_2x2, .ordered_4x4 => dither.threshold(options.dither, x, y),
     };
+}
+
+const GlyphCell = struct {
+    values: [glyph.cell_bits]f32,
+    features: StructureFeatures,
+};
+
+const StructureFeatures = struct {
+    coverage: f32,
+    min: f32,
+    max: f32,
+    centroid_x: f32,
+    centroid_y: f32,
+    spread_x: f32,
+    spread_y: f32,
+    orientation: u8,
+};
+
+fn sampleGlyphStructureCell(
+    image: ImageView,
+    terminal: TerminalProfile,
+    integral: ?*const sample.IntegralLuma,
+    mapping: sample.Mapping,
+    col: u32,
+    row: u32,
+    options: Options,
+) GlyphCell {
+    var values: [glyph.cell_bits]f32 = undefined;
+    var sum: f32 = 0.0;
+
+    var sy: u32 = 0;
+    while (sy < glyph.cell_height) : (sy += 1) {
+        var sx: u32 = 0;
+        while (sx < glyph.cell_width) : (sx += 1) {
+            const i = @as(usize, sy) * glyph.cell_width + sx;
+            const region = sample.cellRegion(mapping, col, row, glyph.cell_width, glyph.cell_height, sx, sy);
+            const raw = sample.regionLuma(image, terminal, integral, region);
+            const adjusted = luma.applyAdjustments(raw, options.contrast, options.brightness, options.invert);
+            values[i] = adjusted;
+            sum += adjusted;
+        }
+    }
+
+    return .{ .values = values, .features = structureFeatures(&values, sum) };
+}
+
+fn structureFeatures(values: *const [glyph.cell_bits]f32, sum: f32) StructureFeatures {
+    const cw = @as(f32, @floatFromInt(glyph.cell_width));
+    const ch = @as(f32, @floatFromInt(glyph.cell_height));
+    const coverage = sum / @as(f32, @floatFromInt(glyph.cell_bits));
+    var min_value: f32 = 1.0;
+    var max_value: f32 = 0.0;
+    for (values) |v| {
+        min_value = @min(min_value, v);
+        max_value = @max(max_value, v);
+    }
+
+    var cx: f32 = 0.5;
+    var cy: f32 = 0.5;
+    if (sum > 0.0) {
+        var sx_sum: f32 = 0.0;
+        var sy_sum: f32 = 0.0;
+        var y: u32 = 0;
+        while (y < glyph.cell_height) : (y += 1) {
+            var x: u32 = 0;
+            while (x < glyph.cell_width) : (x += 1) {
+                const v = values[@as(usize, y) * glyph.cell_width + x];
+                sx_sum += v * @as(f32, @floatFromInt(x));
+                sy_sum += v * @as(f32, @floatFromInt(y));
+            }
+        }
+        cx = (sx_sum / sum) / @max(1.0, cw - 1.0);
+        cy = (sy_sum / sum) / @max(1.0, ch - 1.0);
+    }
+
+    var spread_x: f32 = 0.0;
+    var spread_y: f32 = 0.0;
+    if (sum > 0.0) {
+        const mx = cx * @max(1.0, cw - 1.0);
+        const my = cy * @max(1.0, ch - 1.0);
+        var y: u32 = 0;
+        while (y < glyph.cell_height) : (y += 1) {
+            var x: u32 = 0;
+            while (x < glyph.cell_width) : (x += 1) {
+                const v = values[@as(usize, y) * glyph.cell_width + x];
+                const dx = @as(f32, @floatFromInt(x)) - mx;
+                const dy = @as(f32, @floatFromInt(y)) - my;
+                spread_x += v * dx * dx;
+                spread_y += v * dy * dy;
+            }
+        }
+        spread_x = @sqrt(spread_x / sum) / cw;
+        spread_y = @sqrt(spread_y / sum) / ch;
+    }
+
+    return .{
+        .coverage = coverage,
+        .min = min_value,
+        .max = max_value,
+        .centroid_x = cx,
+        .centroid_y = cy,
+        .spread_x = spread_x,
+        .spread_y = spread_y,
+        .orientation = sourceOrientation(values),
+    };
+}
+
+fn sourceOrientation(values: *const [glyph.cell_bits]f32) u8 {
+    var bins = [_]f32{ 0.0, 0.0, 0.0, 0.0 };
+    var y: u32 = 1;
+    while (y < glyph.cell_height - 1) : (y += 1) {
+        var x: u32 = 1;
+        while (x < glyph.cell_width - 1) : (x += 1) {
+            const gx = values[@as(usize, y) * glyph.cell_width + x + 1] -
+                values[@as(usize, y) * glyph.cell_width + x - 1];
+            const gy = values[@as(usize, y + 1) * glyph.cell_width + x] -
+                values[@as(usize, y - 1) * glyph.cell_width + x];
+            const mag = @sqrt(gx * gx + gy * gy);
+            if (mag < 0.001) continue;
+            var angle = std.math.atan2(gy, gx);
+            if (angle < 0.0) angle += std.math.pi;
+            const bin: usize = @min(3, @as(usize, @intFromFloat((angle / std.math.pi) * 4.0)));
+            bins[bin] += mag;
+        }
+    }
+    var best: usize = 0;
+    for (bins, 0..) |v, i| {
+        if (v > bins[best]) best = i;
+    }
+    return @intCast(best);
+}
+
+fn selectStructuredGlyph(
+    atlas: glyph.Atlas,
+    values: *const [glyph.cell_bits]f32,
+    features: StructureFeatures,
+    quality: Quality,
+) glyph.Glyph {
+    if (features.max - features.min < 0.15) {
+        return atlas.glyphFor(atlas.selectByTone(features.coverage)).?;
+    }
+
+    var best = atlas.glyphs[0];
+    var best_score = std.math.inf(f32);
+    const target_coverage = @min(features.coverage, atlas.max_coverage);
+    const window = coverageWindow(quality, target_coverage);
+    var used_prefilter = false;
+
+    for (atlas.glyphs) |candidate| {
+        const coverage_delta = absFloat(candidate.coverage - target_coverage);
+        if (coverage_delta > window) continue;
+        used_prefilter = true;
+        const score = structuredGlyphScore(atlas, values, features, target_coverage, candidate, quality);
+        if (score < best_score) {
+            best_score = score;
+            best = candidate;
+        }
+    }
+
+    if (used_prefilter) return best;
+
+    for (atlas.glyphs) |candidate| {
+        const score = structuredGlyphScore(atlas, values, features, target_coverage, candidate, quality);
+        if (score < best_score) {
+            best_score = score;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+fn coverageWindow(quality: Quality, coverage_value: f32) f32 {
+    const base: f32 = switch (quality) {
+        .preview => 0.025,
+        .balanced => 0.045,
+        .high => 0.065,
+    };
+    return base + coverage_value * 0.05;
+}
+
+fn structuredGlyphScore(
+    atlas: glyph.Atlas,
+    values: *const [glyph.cell_bits]f32,
+    features: StructureFeatures,
+    target_coverage: f32,
+    candidate: glyph.Glyph,
+    quality: Quality,
+) f32 {
+    const shape = maskDistance(atlas, values, candidate, quality);
+    const coverage_penalty = absFloat(candidate.coverage - target_coverage) * 0.75;
+    const centroid_penalty = (absFloat(candidate.centroid_x - features.centroid_x) +
+        absFloat(candidate.centroid_y - features.centroid_y)) * 0.035;
+    const spread_penalty = (absFloat(candidate.spread_x - features.spread_x) +
+        absFloat(candidate.spread_y - features.spread_y)) * 0.025;
+    const orientation_penalty = @as(f32, @floatFromInt(orientationDistance(candidate.dominant_orientation, features.orientation))) * 0.01;
+    return shape + coverage_penalty + centroid_penalty + spread_penalty + orientation_penalty;
+}
+
+fn maskDistance(
+    atlas: glyph.Atlas,
+    values: *const [glyph.cell_bits]f32,
+    candidate: glyph.Glyph,
+    quality: Quality,
+) f32 {
+    const radius: i32 = switch (quality) {
+        .preview => 0,
+        .balanced, .high => 1,
+    };
+
+    var best = std.math.inf(f32);
+    var dy: i32 = -radius;
+    while (dy <= radius) : (dy += 1) {
+        var dx: i32 = -radius;
+        while (dx <= radius) : (dx += 1) {
+            const dist = maskDistanceAtOffset(atlas, values, candidate, dx, dy);
+            if (dist < best) best = dist;
+        }
+    }
+    return best;
+}
+
+fn maskDistanceAtOffset(
+    atlas: glyph.Atlas,
+    values: *const [glyph.cell_bits]f32,
+    candidate: glyph.Glyph,
+    dx: i32,
+    dy: i32,
+) f32 {
+    var sum: f32 = 0.0;
+    var y: u32 = 0;
+    while (y < glyph.cell_height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < glyph.cell_width) : (x += 1) {
+            const sx = @as(i32, @intCast(x)) - dx;
+            const sy = @as(i32, @intCast(y)) - dy;
+            const on = if (sx >= 0 and sx < glyph.cell_width and sy >= 0 and sy < glyph.cell_height)
+                atlas.maskBit(candidate, @intCast(sx), @intCast(sy))
+            else
+                false;
+            const predicted: f32 = if (on) 1.0 else 0.0;
+            const actual = values[@as(usize, y) * glyph.cell_width + x];
+            const diff = predicted - actual;
+            sum += diff * diff;
+        }
+    }
+    return sum / @as(f32, @floatFromInt(glyph.cell_bits));
+}
+
+fn assignGlyphStructureColors(
+    frame: *Frame,
+    idx: usize,
+    image: ImageView,
+    terminal: TerminalProfile,
+    mapping: sample.Mapping,
+    col: u32,
+    row: u32,
+    selected: glyph.Glyph,
+    options: Options,
+) void {
+    const atlas = glyph.defaultAtlas();
+    var fg_buf: [glyph.cell_bits]color.LinearRgb = undefined;
+    var bg_buf: [glyph.cell_bits]color.LinearRgb = undefined;
+    var fg_count: usize = 0;
+    var bg_count: usize = 0;
+
+    var sy: u32 = 0;
+    while (sy < glyph.cell_height) : (sy += 1) {
+        var sx: u32 = 0;
+        while (sx < glyph.cell_width) : (sx += 1) {
+            const region = sample.cellRegion(mapping, col, row, glyph.cell_width, glyph.cell_height, sx, sy);
+            const s = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]);
+            if (atlas.maskBit(selected, sx, sy)) {
+                fg_buf[fg_count] = s.linear;
+                fg_count += 1;
+            } else {
+                bg_buf[bg_count] = s.linear;
+                bg_count += 1;
+            }
+        }
+    }
+
+    if (fg_count == 0) {
+        const region = sample.cellRegion(mapping, col, row, 1, 1, 0, 0);
+        frame.fg[idx] = sample.areaSample(image, terminal, region[0], region[1], region[2], region[3]).rgb();
+    } else {
+        frame.fg[idx] = color.encodeSrgb(color.representative(fg_buf[0..fg_count], options.color_stat));
+    }
+
+    if (bg_count == 0) {
+        frame.bg[idx] = frame.fg[idx];
+    } else {
+        frame.bg[idx] = color.encodeSrgb(color.representative(bg_buf[0..bg_count], options.color_stat));
+    }
+}
+
+fn orientationDistance(a: u8, b: u8) u8 {
+    const raw = if (a > b) a - b else b - a;
+    return @min(raw, 4 - raw);
+}
+
+fn absFloat(v: f32) f32 {
+    return if (v < 0.0) -v else v;
 }
 
 fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sample, mask: u4, stat: ColorStat) void {
@@ -846,6 +1189,39 @@ test "glyph-tone maps tone extremes to space and the densest glyph" {
     try std.testing.expect(glyph.defaultCoverage(light.codepoints[0]).? > 0.2);
 }
 
+test "glyph-structure recovers a calibrated slash mask" {
+    const allocator = std.testing.allocator;
+    const atlas = glyph.defaultAtlas();
+    const slash = atlas.glyphFor('/').?;
+
+    var pixels: [glyph.cell_bits]Rgba8 = undefined;
+    var y: u32 = 0;
+    while (y < glyph.cell_height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < glyph.cell_width) : (x += 1) {
+            pixels[@as(usize, y) * glyph.cell_width + x] = if (atlas.maskBit(slash, x, y))
+                .{ .r = 255, .g = 255, .b = 255, .a = 255 }
+            else
+                .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+        }
+    }
+
+    var frame = try renderToCells(
+        allocator,
+        .{
+            .width = glyph.cell_width,
+            .height = glyph.cell_height,
+            .stride = glyph.cell_width * @sizeOf(Rgba8),
+            .pixels = &pixels,
+        },
+        .{ .columns = 1, .rows = 1, .color = .none },
+        .{ .mode = .glyph_structure, .fit = .stretch, .quality = .high },
+    );
+    defer frame.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u21, '/'), frame.codepoints[0]);
+}
+
 test "integral_luma sampling matches direct_box for monochrome modes" {
     const allocator = std.testing.allocator;
 
@@ -863,6 +1239,7 @@ test "integral_luma sampling matches direct_box for monochrome modes" {
         .{ .mode = .density, .fit = .stretch },
         .{ .mode = .partition, .partition = .quadrant_2x2, .fit = .stretch },
         .{ .mode = .braille, .fit = .stretch },
+        .{ .mode = .glyph_structure, .fit = .stretch },
     };
     const braille_terminal = TerminalProfile{ .columns = 3, .rows = 3, .color = .none, .symbols = .braille };
 

@@ -162,6 +162,7 @@ fn parseMode(value: []const u8) ?ascii.RenderMode {
     if (std.mem.eql(u8, value, "partition")) return .partition;
     if (std.mem.eql(u8, value, "braille")) return .braille;
     if (std.mem.eql(u8, value, "glyph-tone")) return .glyph_tone;
+    if (std.mem.eql(u8, value, "glyph-structure")) return .glyph_structure;
     return null;
 }
 
@@ -254,7 +255,7 @@ fn describeCliError(err: anyerror) []const u8 {
     return switch (err) {
         error.MissingValue => "expected a value after the previous flag",
         error.InvalidSynthetic => "synthetic input must be gradient, checkerboard, or color-bars",
-        error.InvalidMode => "mode must be density, partition, braille, or glyph-tone",
+        error.InvalidMode => "mode must be density, partition, braille, glyph-tone, or glyph-structure",
         error.InvalidPartition => "partition must be density, half, or quadrant",
         error.InvalidColor => "color must be none, 16, 256, or truecolor",
         error.InvalidFit => "fit must be contain, cover, or stretch",
@@ -283,7 +284,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --synthetic gradient|checkerboard|color-bars
         \\  --width N
         \\  --height N
-        \\  --mode density|partition|braille|glyph-tone
+        \\  --mode density|partition|braille|glyph-tone|glyph-structure
         \\  --partition density|half|quadrant
         \\  --color none|16|256|truecolor
         \\  --fit contain|cover|stretch

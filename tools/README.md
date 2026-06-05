@@ -19,9 +19,10 @@ zig build compare -- --input testdata/color-bars.ppm \
 ```
 
 Reconstruction is faithful for the block and Braille families because their
-glyph masks are known, so the harness needs **no font rasterizer**. Density (and
-any unknown codepoint) is reconstructed as a tone halftone from the default ramp
-coverage — an approximation a real glyph atlas will replace.
+glyph masks are known, so the harness needs **no font rasterizer**. Density and
+glyph-tone are reconstructed as a uniform tone from measured coverage.
+`glyph_structure` is reconstructed from the calibrated ASCII masks at the
+atlas cell resolution.
 
 `--stat mean|trimmed|median` selects the representative-color policy, so the
 harness can numerically compare color solves (see RESEARCH.md "Color Strategy").
@@ -57,7 +58,6 @@ is the one-line implementation translation unit.
 
 ## Planned
 
-- `src/glyph.zig`: glyph-tone renderer consuming the generated atlas,
-- structural prefilter + alignment-tolerant scorer for `glyph_structure`,
+- structural scorer refinements for `glyph_structure`,
 - a small line-art / UI / photo / logo quality corpus,
 - optional decoder experiments.

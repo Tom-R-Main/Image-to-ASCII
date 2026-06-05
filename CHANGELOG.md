@@ -38,9 +38,14 @@
   truecolor; integral-sampler capable. Exposed as `--mode glyph-tone` in the CLI and
   the harness. In quality-harness A/B it beats the linear density ramp (gradient
   PSNR 13.7 -> 16.0 dB, SSIM 0.70 -> 0.87).
+- Glyph-structure render mode (`RenderMode.glyph_structure`): samples each output
+  cell at the calibrated 8x16 atlas grid, extracts coverage/centroid/spread/orientation,
+  and picks a printable ASCII glyph by packed-mask distance with a small alignment
+  tolerance. Low-contrast cells fall back to glyph-tone. Exposed as `--mode
+  glyph-structure` in the CLI and harness.
 - Harness reconstruction now models tonal glyphs (density / glyph-tone) as a uniform
-  linear blend by measured coverage, and structural glyphs (block / Braille) by their
-  exact masks, so PSNR/SSIM are meaningful for tone modes.
+  linear blend by measured coverage, block/Braille by exact masks, and
+  `glyph_structure` by calibrated ASCII glyph masks at the atlas cell resolution.
 - Configurable representative-color solve for two-color symbol families
   (`Options.color_stat`: `mean`, `trimmed_mean`, `median`) in linear light, per
   RESEARCH.md "Color Strategy". Quadrant and Braille foreground/background

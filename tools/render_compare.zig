@@ -91,7 +91,7 @@ fn run(writer: *std.Io.Writer, io: std.Io, allocator: std.mem.Allocator, options
     var frame = try ascii.renderToCells(allocator, image, terminal, render_options);
     defer frame.deinit(allocator);
 
-    var recon = try reconstruct.reconstruct(allocator, frame);
+    var recon = try reconstruct.reconstructForMode(allocator, frame, options.mode);
     defer recon.deinit(allocator);
 
     const background = common.Rgb{
@@ -187,6 +187,7 @@ fn parseMode(v: []const u8) ?ascii.RenderMode {
     if (std.mem.eql(u8, v, "partition")) return .partition;
     if (std.mem.eql(u8, v, "braille")) return .braille;
     if (std.mem.eql(u8, v, "glyph-tone")) return .glyph_tone;
+    if (std.mem.eql(u8, v, "glyph-structure")) return .glyph_structure;
     return null;
 }
 
@@ -246,7 +247,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --input path.ppm|path.pam   (required)
         \\  --width N                   output columns (default 80)
         \\  --height N                  output rows (default 40)
-        \\  --mode density|partition|braille
+        \\  --mode density|partition|braille|glyph-tone|glyph-structure
         \\  --partition density|half|quadrant
         \\  --color none|truecolor
         \\  --fit contain|cover|stretch

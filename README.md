@@ -76,7 +76,8 @@ defer frame.deinit(allocator);
 
 Bootstrap is in place. The package currently exposes public types, validation helpers, aspect-aware sampling
 (`contain`/`cover`/`stretch`, with `cover` cropping the source rather than distorting it), density rendering, truecolor
-half-block rendering, quadrant rendering, monochrome Braille rendering, calibrated glyph-tone rendering, ordered
+half-block rendering, quadrant rendering, monochrome Braille rendering, calibrated glyph-tone rendering, baseline
+glyph-structure rendering, ordered
 dithering, a configurable representative-color solve for two-color symbol families (`Options.color_stat`:
 `mean`/`trimmed_mean`/`median`), a selectable sampling strategy (`Options.sample_strategy`: `auto`/`direct_box`/
 `integral_luma`), a fast hand-rolled ANSI writer with SGR coalescing, a synthetic-image CLI, PPM/PAM fixture input, and a
@@ -84,6 +85,6 @@ render-kernel benchmark. The hot path uses a compile-time sRGB→linear lookup t
 initial baseline.
 
 A quality harness lives under `tools/` (`zig build compare`): it renders an image, reconstructs it from the emitted
-cells (tonal glyphs as a coverage blend, block/Braille by exact masks), and scores it with PSNR/SSIM/edge-correlation —
-no font rasterizer required. `tools/calibrate_font.zig` rasterizes a real font via stb_truetype to generate a glyph
-atlas (coverage + structural features) for the glyph render modes.
+cells (tonal glyphs as a coverage blend, block/Braille by exact masks, `glyph_structure` by calibrated ASCII masks), and
+scores it with PSNR/SSIM/edge-correlation — no font rasterizer required. `tools/calibrate_font.zig` rasterizes a real
+font via stb_truetype to generate a glyph atlas (coverage + structural features) for the glyph render modes.

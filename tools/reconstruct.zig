@@ -15,12 +15,17 @@ const Rgb = common.Rgb;
 
 /// Subpixels per cell. 2x4 matches Braille granularity and reproduces quadrant
 /// (2x2) and half-block (1x2) fills exactly by row/column duplication.
-pub const cell_w = 2;
-pub const cell_h = 4;
+pub const block_cell_w = 2;
+pub const block_cell_h = 4;
 
 pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
-    const out_w = frame.columns * cell_w;
-    const out_h = frame.rows * cell_h;
+    return reconstructForMode(allocator, frame, .density);
+}
+
+pub fn reconstructForMode(allocator: std.mem.Allocator, frame: ascii.Frame, mode: ascii.RenderMode) !ImageBuf {
+    const dims = cellDims(mode);
+    const out_w = frame.columns * dims.w;
+    const out_h = frame.rows * dims.h;
     var out = try ImageBuf.alloc(allocator, out_w, out_h);
     errdefer out.deinit(allocator);
 
@@ -33,15 +38,15 @@ pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
             const fg: Rgb = if (frame.color != .none) frame.fg[idx] else .{ .r = 255, .g = 255, .b = 255 };
             const bg: Rgb = if (frame.color != .none) frame.bg[idx] else .{ .r = 0, .g = 0, .b = 0 };
 
-            if (structuralMask(cp)) |kind| {
+            if (structuralMask(cp, mode)) |kind| {
                 // Block / Braille glyphs have real sub-cell structure: paint each
                 // subpixel fg or bg per the glyph mask.
                 var sy: u32 = 0;
-                while (sy < cell_h) : (sy += 1) {
+                while (sy < dims.h) : (sy += 1) {
                     var sx: u32 = 0;
-                    while (sx < cell_w) : (sx += 1) {
-                        const on = subpixelOn(kind, cp, sx, sy);
-                        out.set(col * cell_w + sx, row * cell_h + sy, if (on) fg else bg);
+                    while (sx < dims.w) : (sx += 1) {
+                        const on = subpixelOn(kind, cp, sx, sy, dims);
+                        out.set(col * dims.w + sx, row * dims.h + sy, if (on) fg else bg);
                     }
                 }
             } else {
@@ -55,10 +60,10 @@ pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
                 const coverage = coverageOf(cp);
                 const c = blendLinear(bg, fg, coverage);
                 var sy: u32 = 0;
-                while (sy < cell_h) : (sy += 1) {
+                while (sy < dims.h) : (sy += 1) {
                     var sx: u32 = 0;
-                    while (sx < cell_w) : (sx += 1) {
-                        out.set(col * cell_w + sx, row * cell_h + sy, c);
+                    while (sx < dims.w) : (sx += 1) {
+                        out.set(col * dims.w + sx, row * dims.h + sy, c);
                     }
                 }
             }
@@ -67,27 +72,44 @@ pub fn reconstruct(allocator: std.mem.Allocator, frame: ascii.Frame) !ImageBuf {
     return out;
 }
 
-const StructuralKind = enum { braille, block };
+const StructuralKind = enum { braille, block, glyph };
 
-fn structuralMask(cp: u21) ?StructuralKind {
+const CellDims = struct { w: u32, h: u32 };
+
+fn cellDims(mode: ascii.RenderMode) CellDims {
+    return if (mode == .glyph_structure)
+        .{ .w = ascii.default_glyph_cell_width, .h = ascii.default_glyph_cell_height }
+    else
+        .{ .w = block_cell_w, .h = block_cell_h };
+}
+
+fn structuralMask(cp: u21, mode: ascii.RenderMode) ?StructuralKind {
     if (cp >= 0x2800 and cp <= 0x28FF) return .braille;
     // Block glyphs carry structure; space is tonal (empty == black/bg either way).
     if (cp != ' ' and quadrantMaskOf(cp) != null) return .block;
+    if (mode == .glyph_structure and ascii.defaultGlyphCoverage(cp) != null) return .glyph;
     return null;
 }
 
-fn subpixelOn(kind: StructuralKind, cp: u21, sx: u32, sy: u32) bool {
+fn subpixelOn(kind: StructuralKind, cp: u21, sx: u32, sy: u32, dims: CellDims) bool {
     switch (kind) {
         .braille => {
             const mask: u8 = @intCast(cp - 0x2800);
-            return (mask & brailleDotMask(sx, sy)) != 0;
+            const bx = (sx * block_cell_w) / dims.w;
+            const by = (sy * block_cell_h) / dims.h;
+            return (mask & brailleDotMask(bx, by)) != 0;
         },
         .block => {
             const mask = quadrantMaskOf(cp).?;
-            const qx = sx; // 0..1
-            const qy = sy / 2; // rows {0,1} -> top, {2,3} -> bottom
+            const qx = (sx * 2) / dims.w;
+            const qy = (sy * 2) / dims.h;
             const bit = @as(u4, 1) << @intCast(qy * 2 + qx);
             return (mask & bit) != 0;
+        },
+        .glyph => {
+            const gx = (sx * ascii.default_glyph_cell_width) / dims.w;
+            const gy = (sy * ascii.default_glyph_cell_height) / dims.h;
+            return ascii.defaultGlyphMaskBit(cp, gx, gy) orelse false;
         },
     }
 }
@@ -194,4 +216,33 @@ test "half block reconstruction splits top and bottom" {
 
     try std.testing.expectEqual(@as(u8, 200), img.at(0, 0).r); // top = fg
     try std.testing.expectEqual(@as(u8, 200), img.at(0, 3).b); // bottom = bg
+}
+
+test "glyph-structure reconstruction uses calibrated ascii masks" {
+    const allocator = std.testing.allocator;
+    var frame = ascii.Frame{
+        .columns = 1,
+        .rows = 1,
+        .color = .none,
+        .codepoints = try allocator.alloc(u21, 1),
+        .fg = try allocator.alloc(common.Rgb, 0),
+        .bg = try allocator.alloc(common.Rgb, 0),
+    };
+    defer frame.deinit(allocator);
+    frame.codepoints[0] = '/';
+
+    var tonal = try reconstruct(allocator, frame);
+    defer tonal.deinit(allocator);
+    var structural = try reconstructForMode(allocator, frame, .glyph_structure);
+    defer structural.deinit(allocator);
+
+    var differs = false;
+    var y: u32 = 0;
+    while (y < structural.height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < structural.width) : (x += 1) {
+            differs = differs or structural.at(x, y).r != tonal.at(x, y).r;
+        }
+    }
+    try std.testing.expect(differs);
 }

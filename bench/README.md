@@ -10,6 +10,8 @@ zig build bench
 Current benchmark cases:
 
 - density without color,
+- glyph-tone without color,
+- glyph-structure without color,
 - half-block truecolor,
 - quadrant truecolor,
 - Braille monochrome.
@@ -31,9 +33,15 @@ zig build -Doptimize=ReleaseFast bench
 ```
 
 ```text
-case,input,output,iterations,total_ns,ns_per_iter,cells_per_sec
-density-none,400x240,80x30,200,562937125,2814685,852670
-half-truecolor,400x240,80x30,200,572936000,2864680,837789
-quadrant-truecolor,400x240,80x30,200,904700708,4523503,530562
-braille-none,400x240,80x30,200,867408334,4337041,553372
+case,input,output,iters,ns_per_iter,ns_per_cell,cells_per_sec,bytes
+density-none,400x240,80x30,200,297814,124,8058721,0
+density-truecolor,400x240,80x30,200,286417,119,8379390,0
+glyph-tone-none,400x240,80x30,200,297920,124,8055853,0
+glyph-structure-none,400x240,80x30,200,18991305,7913,126373,0
+half-truecolor,400x240,80x30,200,341897,142,7019657,0
+quadrant-none,400x240,80x30,200,378800,157,6335797,0
+quadrant-truecolor,400x240,80x30,200,592652,246,4049594,0
+braille-none-dither,400x240,80x30,200,688453,286,3486076,0
+braille-truecolor,400x240,80x30,200,885243,368,2711119,0
+ansi-half-truecolor,400x240,80x30,200,379425,158,6325360,98539
 ```

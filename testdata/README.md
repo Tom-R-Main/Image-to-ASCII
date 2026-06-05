@@ -12,6 +12,7 @@ Current fixtures:
 
 - `diagonal.ppm`: 2x2 white/black diagonal for quadrant and Braille checks.
 - `color-bars.ppm`: 4x1 RGB/white bars for color and density checks.
+- `slash-line.ppm`: 8x16 monochrome line-art cell for glyph-structure checks.
 
 Avoid:
 
