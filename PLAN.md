@@ -683,6 +683,7 @@ Must include:
 - tuned auto sampler policy with per-row policy visibility in benchmark output,
 - render-workspace reuse API for frame buffers and render-shape scratch,
 - repeated-render benchmark rows with first-render and steady-state allocation counts,
+- ANSI frame-diff writer with dirty-run benchmarks,
 - quality ratchet hooks before more glyph tuning.
 
 ### `v0.3.0`: Glyph-Tone
@@ -738,7 +739,7 @@ Must include:
 
 ## Immediate Next Actions
 
-1. Add an ANSI diff writer on top of stable `Frame` output.
-2. Expand the quality corpus before deeper glyph-structure pruning.
-3. Compare PNG/JPEG adapter options while keeping decoder dependencies outside core.
-4. Continue low-level glyph scoring work only after the workspace reuse benchmark stays stable.
+1. Expand the quality corpus before deeper glyph-structure pruning.
+2. Compare PNG/JPEG adapter options while keeping decoder dependencies outside core.
+3. Add TUI adapter integration notes for `RenderWorkspace` plus frame diffs.
+4. Continue low-level glyph scoring work once output bandwidth is no longer the bottleneck.

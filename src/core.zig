@@ -16,6 +16,9 @@ pub const ColorStat = color.ColorStat;
 pub const SamplePlan = sample.SamplePlan;
 pub const SamplerPolicy = sample.SamplerPolicy;
 pub const SampleStrategy = sample.SampleStrategy;
+pub const AnsiDiffMode = ansi.DiffMode;
+pub const AnsiDiffOptions = ansi.DiffOptions;
+pub const AnsiDiffStats = ansi.DiffStats;
 
 pub const ValidationError = error{
     EmptyImage,
@@ -32,7 +35,9 @@ pub const RenderError = ValidationError || error{
     UnsupportedColorMode,
 };
 
-pub const Error = RenderError;
+pub const AnsiDiffError = ansi.DiffError;
+
+pub const Error = RenderError || AnsiDiffError;
 
 pub const RenderMode = enum {
     density,
@@ -399,10 +404,19 @@ pub fn renderFrameToWriter(writer: *std.Io.Writer, frame: Frame) !void {
     try ansi.writeFrame(writer, frame);
 }
 
+pub fn renderFrameDiffToWriter(
+    writer: *std.Io.Writer,
+    previous: ?*const Frame,
+    current: *const Frame,
+    options: AnsiDiffOptions,
+) !AnsiDiffStats {
+    return ansi.writeFrameDiff(writer, previous, current, options);
+}
+
 fn validateSupportedColor(color_mode: ColorMode) RenderError!void {
     switch (color_mode) {
         .none, .truecolor => {},
-        .ansi16, .ansi256 => return Error.UnsupportedColorMode,
+        .ansi16, .ansi256 => return RenderError.UnsupportedColorMode,
     }
 }
 
@@ -1492,6 +1506,183 @@ test "writer emits truecolor SGR and reset" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[38;2;255;0;0m") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[48;2;0;0;255m") != null);
     try std.testing.expect(std.mem.endsWith(u8, out, "\x1b[0m\n"));
+}
+
+test "frame diff previous null emits full frame runs" {
+    var codepoints = [_]u21{ 'A', 'B' };
+    var frame = Frame{
+        .columns = 2,
+        .rows = 1,
+        .color = .none,
+        .codepoints = &codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var buffer: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    const stats = try renderFrameDiffToWriter(&writer, null, &frame, .{});
+
+    try std.testing.expectEqualStrings("\x1b[1;1HAB", writer.buffered());
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_examined);
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_changed);
+    try std.testing.expectEqual(@as(usize, 1), stats.runs_emitted);
+    try std.testing.expectEqual(writer.end, stats.bytes_emitted);
+}
+
+test "frame diff identical frames emit no bytes" {
+    var codepoints = [_]u21{ 'A', 'B', 'C' };
+    var previous = Frame{
+        .columns = 3,
+        .rows = 1,
+        .color = .none,
+        .codepoints = &codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var current = previous;
+    var buffer: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    const stats = try renderFrameDiffToWriter(&writer, &previous, &current, .{});
+
+    try std.testing.expectEqualStrings("", writer.buffered());
+    try std.testing.expectEqual(@as(usize, 3), stats.cells_examined);
+    try std.testing.expectEqual(@as(usize, 0), stats.cells_changed);
+    try std.testing.expectEqual(@as(usize, 0), stats.runs_emitted);
+    try std.testing.expectEqual(@as(usize, 0), stats.bytes_emitted);
+}
+
+test "frame diff coalesces row contiguous dirty runs" {
+    var previous_codepoints = [_]u21{ 'A', 'B', 'C', 'D', 'E' };
+    var current_codepoints = [_]u21{ 'A', 'X', 'Y', 'D', 'E' };
+    var previous = Frame{
+        .columns = 5,
+        .rows = 1,
+        .color = .none,
+        .codepoints = &previous_codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var current = previous;
+    current.codepoints = &current_codepoints;
+    var buffer: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    const stats = try renderFrameDiffToWriter(&writer, &previous, &current, .{});
+
+    try std.testing.expectEqualStrings("\x1b[1;2HXY", writer.buffered());
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_changed);
+    try std.testing.expectEqual(@as(usize, 1), stats.runs_emitted);
+}
+
+test "frame diff emits separate row runs" {
+    var previous_codepoints = [_]u21{ 'A', 'B', 'C', 'D' };
+    var current_codepoints = [_]u21{ 'X', 'B', 'C', 'Y' };
+    var previous = Frame{
+        .columns = 2,
+        .rows = 2,
+        .color = .none,
+        .codepoints = &previous_codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var current = previous;
+    current.codepoints = &current_codepoints;
+    var buffer: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    const stats = try renderFrameDiffToWriter(&writer, &previous, &current, .{});
+
+    try std.testing.expectEqualStrings("\x1b[1;1HX\x1b[2;2HY", writer.buffered());
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_changed);
+    try std.testing.expectEqual(@as(usize, 2), stats.runs_emitted);
+}
+
+test "frame diff rewrites color-only changes and colored spaces" {
+    var previous_codepoints = [_]u21{ 'A', ' ' };
+    var current_codepoints = previous_codepoints;
+    var previous_fg = [_]Rgb8{
+        .{ .r = 255, .g = 255, .b = 255 },
+        .{ .r = 255, .g = 255, .b = 255 },
+    };
+    var previous_bg = [_]Rgb8{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+    };
+    var current_fg = previous_fg;
+    var current_bg = previous_bg;
+    current_fg[0] = .{ .r = 255, .g = 0, .b = 0 };
+    current_bg[1] = .{ .r = 0, .g = 0, .b = 255 };
+    var previous = Frame{
+        .columns = 2,
+        .rows = 1,
+        .color = .truecolor,
+        .codepoints = &previous_codepoints,
+        .fg = &previous_fg,
+        .bg = &previous_bg,
+    };
+    var current = Frame{
+        .columns = 2,
+        .rows = 1,
+        .color = .truecolor,
+        .codepoints = &current_codepoints,
+        .fg = &current_fg,
+        .bg = &current_bg,
+    };
+    var buffer: [256]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    const stats = try renderFrameDiffToWriter(&writer, &previous, &current, .{});
+    const out = writer.buffered();
+
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_changed);
+    try std.testing.expectEqual(@as(usize, 1), stats.runs_emitted);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[38;2;255;0;0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[48;2;0;0;255m ") != null);
+    try std.testing.expect(std.mem.endsWith(u8, out, "\x1b[0m"));
+}
+
+test "frame diff mismatch behavior is explicit" {
+    var previous_codepoints = [_]u21{'A'};
+    var current_codepoints = [_]u21{ 'B', 'C' };
+    var previous = Frame{
+        .columns = 1,
+        .rows = 1,
+        .color = .none,
+        .codepoints = &previous_codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var current = Frame{
+        .columns = 2,
+        .rows = 1,
+        .color = .none,
+        .codepoints = &current_codepoints,
+        .fg = @constCast(&[_]Rgb8{}),
+        .bg = @constCast(&[_]Rgb8{}),
+    };
+    var buffer: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+
+    try std.testing.expectError(
+        AnsiDiffError.FrameShapeMismatch,
+        renderFrameDiffToWriter(&writer, &previous, &current, .{}),
+    );
+
+    writer = .fixed(&buffer);
+    const stats = try renderFrameDiffToWriter(&writer, &previous, &current, .{ .mismatch = .full_frame_on_mismatch });
+    try std.testing.expectEqualStrings("\x1b[1;1HBC", writer.buffered());
+    try std.testing.expectEqual(@as(usize, 2), stats.cells_changed);
+
+    current.columns = 1;
+    current.codepoints = current_codepoints[0..1];
+    current.color = .truecolor;
+    try std.testing.expectError(
+        AnsiDiffError.FrameColorMismatch,
+        renderFrameDiffToWriter(&writer, &previous, &current, .{}),
+    );
 }
 
 test "quadrant renderer maps diagonal fixture to quadrant glyph" {

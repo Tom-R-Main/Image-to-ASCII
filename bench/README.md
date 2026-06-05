@@ -9,6 +9,7 @@ zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-precompute.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
 ```
 
 `bench/results/baseline.json` is intentionally tracked as the current local baseline. Generated or large benchmark corpora
@@ -30,6 +31,8 @@ The current synthetic matrix separates render kernels, prepared reuse, ANSI enco
   truecolor, glyph-structure mono/truecolor, and prepared density integral-luma,
 - full render-to-writer half-block truecolor,
 - ANSI encode only,
+- ANSI frame diff rows for noop, single-cell, small-run, one-row, and full-frame changes,
+- workspace render-plus-diff repeat rows,
 - quality compare only.
 
 The JSON artifact records:
@@ -39,6 +42,7 @@ The JSON artifact records:
 - iterations, mean ns/iteration, median, p95, ns/cell, and cells/sec,
 - estimated per-render allocation bytes (frame buffers plus render-shape span plans),
 - first-render and steady-state allocation counts/bytes for workspace reuse rows,
+- changed cell counts and emitted dirty-run counts for ANSI diff rows,
 - ANSI bytes emitted,
 - Zig version, OS, and CPU architecture.
 
@@ -212,3 +216,69 @@ prepared-workspace-density-integral-repeat,prepared_integral_luma,53911,54598,1.
 The important invariant is the steady-state allocation count: repeated same-shape renders reuse frame buffers and, when
 the selected sampler policy uses spans, reuse the `SamplePlan` arrays as render-shape scratch. Prepared integral-luma
 reuse performs only the first `Frame` allocation and does not construct span arrays.
+
+## ANSI Diff Writer
+
+`bench/results/ansi-diff.json` records frame-to-frame diff rows. The diff compares `Frame` cell arrays directly and emits
+row-contiguous dirty runs:
+
+- noop frames emit no dirty cells and 0 bytes,
+- glyph or fg/bg color changes rewrite the cell,
+- spaces are still emitted when their background color is active,
+- shape or color-mode mismatches error by default, with an explicit full-frame fallback option.
+
+Inspect diff rows with:
+
+```sh
+jq -r '
+  .results[] |
+  select(.case | startswith("ansi-diff") or contains("render-plus-diff")) |
+  [
+    .case,
+    .ns_per_iter,
+    .median_ns,
+    .ansi_bytes,
+    .cells_changed,
+    .runs_emitted,
+    .allocations_first_render,
+    .allocations_steady_state,
+    .bytes_allocated_first_render,
+    .bytes_allocated_steady_state
+  ] | @tsv
+' bench/results/ansi-diff.json
+```
+
+Current local result:
+
+```text
+case,ns_per_iter,median_ns,ansi_bytes,cells_changed,runs_emitted,allocs_first,allocs_steady,bytes_first,bytes_steady
+ansi-diff-noop,4802,4750,0,0,0,0,0,0,0
+ansi-diff-single-cell-change,4783,4792,44,1,1,0,0,0,0
+ansi-diff-small-run-change,4804,4792,52,8,1,0,0,0,0
+ansi-diff-one-row-change,5539,4959,123,80,1,0,0,0,0
+ansi-diff-full-change,8039,7667,2637,2400,30,0,0,0,0
+workspace-render-plus-diff-repeat,221730,217375,0,0,0,10,0,53280,0
+prepared-workspace-render-plus-diff-repeat,60457,58000,0,0,0,2,0,19200,0
+```
+
+Compare the render-plus-diff rows against the workspace-only artifact with:
+
+```sh
+jq -r -s '
+  (.[0].results | map({key:.case, value:{ns:.ns_per_iter}}) | from_entries) as $workspace |
+  .[1].results[] |
+  select(.case == "workspace-render-plus-diff-repeat" or .case == "prepared-workspace-render-plus-diff-repeat") |
+  . as $diff |
+  (if .case == "workspace-render-plus-diff-repeat" then "workspace-density-truecolor-repeat" else "prepared-workspace-density-integral-repeat" end) as $base_key |
+  ($workspace[$base_key]) as $b |
+  [$diff.case, $base_key, $b.ns, $diff.ns_per_iter, (((($diff.ns_per_iter - $b.ns) * 10000 / $b.ns) | round) / 100), $diff.allocations_steady_state, $diff.bytes_allocated_steady_state, $diff.ansi_bytes] | @tsv
+' bench/results/workspace-reuse.json bench/results/ansi-diff.json
+```
+
+Current render-plus-diff vs workspace-only:
+
+```text
+case,workspace_case,workspace_ns,diff_ns,delta_pct,allocs_steady,bytes_steady,ansi_bytes
+workspace-render-plus-diff-repeat,workspace-density-truecolor-repeat,209312,221730,5.93,0,0,0
+prepared-workspace-render-plus-diff-repeat,prepared-workspace-density-integral-repeat,54598,60457,10.73,0,0,0
+```

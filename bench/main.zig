@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const ascii = @import("image_to_ascii");
 
 const Synthetic = enum { gradient, checkerboard, color_mix };
+const DiffScenario = enum { none, noop, single_cell, small_run, one_row, full };
 const BenchKind = enum {
     render,
     render_prepared,
@@ -11,6 +12,9 @@ const BenchKind = enum {
     quality_compare_only,
     workspace_repeat,
     prepared_workspace_repeat,
+    ansi_diff,
+    workspace_render_diff_repeat,
+    prepared_workspace_render_diff_repeat,
 };
 
 const BenchCase = struct {
@@ -22,6 +26,7 @@ const BenchCase = struct {
     color: ascii.ColorMode,
     dither: ascii.DitherMode = .none,
     sample_strategy: ascii.SampleStrategy = .auto,
+    diff_scenario: DiffScenario = .none,
 };
 
 const BenchResult = struct {
@@ -49,6 +54,8 @@ const BenchResult = struct {
     allocations_steady_state: usize = 0,
     bytes_allocated_first_render: usize = 0,
     bytes_allocated_steady_state: usize = 0,
+    cells_changed: usize = 0,
+    runs_emitted: usize = 0,
     ansi_bytes: u64,
 };
 
@@ -75,6 +82,13 @@ const cases = [_]BenchCase{
     .{ .name = "workspace-glyph-structure-none-repeat", .kind = .workspace_repeat, .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .none },
     .{ .name = "workspace-glyph-structure-truecolor-repeat", .kind = .workspace_repeat, .synthetic = .checkerboard, .mode = .glyph_structure, .partition = .density_1x1, .color = .truecolor },
     .{ .name = "prepared-workspace-density-integral-repeat", .kind = .prepared_workspace_repeat, .mode = .density, .partition = .density_1x1, .color = .none, .sample_strategy = .integral_luma },
+    .{ .name = "ansi-diff-noop", .kind = .ansi_diff, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .diff_scenario = .noop },
+    .{ .name = "ansi-diff-single-cell-change", .kind = .ansi_diff, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .diff_scenario = .single_cell },
+    .{ .name = "ansi-diff-small-run-change", .kind = .ansi_diff, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .diff_scenario = .small_run },
+    .{ .name = "ansi-diff-one-row-change", .kind = .ansi_diff, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .diff_scenario = .one_row },
+    .{ .name = "ansi-diff-full-change", .kind = .ansi_diff, .synthetic = .color_mix, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .diff_scenario = .full },
+    .{ .name = "workspace-render-plus-diff-repeat", .kind = .workspace_render_diff_repeat, .mode = .density, .partition = .density_1x1, .color = .truecolor },
+    .{ .name = "prepared-workspace-render-plus-diff-repeat", .kind = .prepared_workspace_render_diff_repeat, .mode = .density, .partition = .density_1x1, .color = .none, .sample_strategy = .integral_luma },
 };
 
 const in_w = 400;
@@ -110,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
 
     var results: [cases.len]BenchResult = undefined;
 
-    try stdout.writeAll("case,policy,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,allocs_first,allocs_steady,bytes_first,bytes_steady,ansi_bytes\n");
+    try stdout.writeAll("case,policy,input,output,iters,ns_per_iter,median_ns,p95_ns,ns_per_cell,cells_per_sec,allocated_bytes,allocs_first,allocs_steady,bytes_first,bytes_steady,cells_changed,runs_emitted,ansi_bytes\n");
     for (cases, 0..) |bench_case, idx| {
         const image = switch (bench_case.synthetic) {
             .gradient => gradient,
@@ -169,6 +183,12 @@ fn runCase(
     if (bench_case.kind == .workspace_repeat or bench_case.kind == .prepared_workspace_repeat) {
         return runWorkspaceCase(io, allocator, image, terminal, options, bench_case);
     }
+    if (bench_case.kind == .ansi_diff) {
+        return runAnsiDiffCase(io, allocator, image, terminal, options, ansi_buf, bench_case);
+    }
+    if (bench_case.kind == .workspace_render_diff_repeat or bench_case.kind == .prepared_workspace_render_diff_repeat) {
+        return runWorkspaceDiffCase(io, allocator, image, terminal, options, ansi_buf, bench_case);
+    }
 
     var prepared: ?ascii.PreparedImage = null;
     defer if (prepared) |*p| p.deinit(allocator);
@@ -224,6 +244,67 @@ fn runCase(
         .cells_per_sec = if (ns_per_iter == 0) 0 else (cells * std.time.ns_per_s) / ns_per_iter,
         .allocated_bytes = allocatedBytes(bench_case, out_w, out_h),
         .ansi_bytes = if (bench_case.kind == .render_writer or bench_case.kind == .ansi_encode_only) bytes else 0,
+    };
+}
+
+fn runAnsiDiffCase(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    image: ascii.ImageView,
+    terminal: ascii.TerminalProfile,
+    options: ascii.Options,
+    ansi_buf: []u8,
+    bench_case: BenchCase,
+) !BenchResult {
+    var previous = try ascii.renderToCells(allocator, image, terminal, options);
+    defer previous.deinit(allocator);
+    var current = try cloneFrame(allocator, previous);
+    defer current.deinit(allocator);
+    mutateFrameForDiff(&current, bench_case.diff_scenario);
+
+    const sampler_policy = ascii.resolveSamplerPolicy(options, terminal, false);
+    var stats = try runFrameDiffOnce(ansi_buf, &previous, &current);
+
+    var timings: [iterations]u64 = undefined;
+    var total_ns: u64 = 0;
+    var i: u64 = 0;
+    while (i < iterations) : (i += 1) {
+        const start = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        stats = try runFrameDiffOnce(ansi_buf, &previous, &current);
+        const end = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        const elapsed: u64 = @intCast(end - start);
+        timings[@intCast(i)] = elapsed;
+        total_ns += elapsed;
+    }
+
+    insertionSortU64(&timings);
+
+    const ns_per_iter = total_ns / iterations;
+    const cells = @as(u64, out_w) * out_h;
+    return .{
+        .name = bench_case.name,
+        .kind = bench_case.kind,
+        .synthetic = bench_case.synthetic,
+        .mode = bench_case.mode,
+        .partition = bench_case.partition,
+        .color = bench_case.color,
+        .dither = bench_case.dither,
+        .sample_strategy = bench_case.sample_strategy,
+        .sampler_policy = sampler_policy,
+        .input_width = in_w,
+        .input_height = in_h,
+        .output_columns = out_w,
+        .output_rows = out_h,
+        .iterations = iterations,
+        .ns_per_iter = ns_per_iter,
+        .median_ns = timings[timings.len / 2],
+        .p95_ns = timings[(timings.len * 95 + 99) / 100 - 1],
+        .ns_per_cell = ns_per_iter / cells,
+        .cells_per_sec = if (ns_per_iter == 0) 0 else (cells * std.time.ns_per_s) / ns_per_iter,
+        .allocated_bytes = 0,
+        .cells_changed = stats.cells_changed,
+        .runs_emitted = stats.runs_emitted,
+        .ansi_bytes = stats.bytes_emitted,
     };
 }
 
@@ -309,6 +390,97 @@ fn runWorkspaceCase(
     };
 }
 
+fn runWorkspaceDiffCase(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    image: ascii.ImageView,
+    terminal: ascii.TerminalProfile,
+    options: ascii.Options,
+    ansi_buf: []u8,
+    bench_case: BenchCase,
+) !BenchResult {
+    var prepared: ?ascii.PreparedImage = null;
+    defer if (prepared) |*p| p.deinit(allocator);
+    if (bench_case.kind == .prepared_workspace_render_diff_repeat) {
+        prepared = try ascii.prepareImage(allocator, image, terminal, .{ .sample_strategy = bench_case.sample_strategy });
+    }
+
+    const prepared_integral = if (prepared) |p| p.luma_sat != null else false;
+    const sampler_policy = ascii.resolveSamplerPolicy(options, terminal, prepared_integral);
+
+    var counting = BenchCountingAllocator{ .child = allocator };
+    const counting_allocator = counting.allocator();
+
+    var previous_workspace: ascii.RenderWorkspace = .empty;
+    defer previous_workspace.deinit(counting_allocator);
+    var current_workspace: ascii.RenderWorkspace = .empty;
+    defer current_workspace.deinit(counting_allocator);
+
+    if (prepared) |*p| {
+        try ascii.renderPreparedIntoWorkspace(&previous_workspace, counting_allocator, p, terminal, options);
+        try ascii.renderPreparedIntoWorkspace(&current_workspace, counting_allocator, p, terminal, options);
+    } else {
+        try ascii.renderIntoWorkspace(&previous_workspace, counting_allocator, image, terminal, options);
+        try ascii.renderIntoWorkspace(&current_workspace, counting_allocator, image, terminal, options);
+    }
+    const first_allocs = counting.alloc_count;
+    const first_bytes = counting.bytes_allocated;
+
+    counting.reset();
+
+    var stats = try runFrameDiffOnce(ansi_buf, &previous_workspace.frame, &current_workspace.frame);
+    var timings: [iterations]u64 = undefined;
+    var total_ns: u64 = 0;
+    var i: u64 = 0;
+    while (i < iterations) : (i += 1) {
+        const start = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        if (prepared) |*p| {
+            try ascii.renderPreparedIntoWorkspace(&current_workspace, counting_allocator, p, terminal, options);
+        } else {
+            try ascii.renderIntoWorkspace(&current_workspace, counting_allocator, image, terminal, options);
+        }
+        stats = try runFrameDiffOnce(ansi_buf, &previous_workspace.frame, &current_workspace.frame);
+        const end = std.Io.Timestamp.now(io, .awake).toNanoseconds();
+        const elapsed: u64 = @intCast(end - start);
+        timings[@intCast(i)] = elapsed;
+        total_ns += elapsed;
+    }
+
+    insertionSortU64(&timings);
+
+    const ns_per_iter = total_ns / iterations;
+    const cells = @as(u64, out_w) * out_h;
+    return .{
+        .name = bench_case.name,
+        .kind = bench_case.kind,
+        .synthetic = bench_case.synthetic,
+        .mode = bench_case.mode,
+        .partition = bench_case.partition,
+        .color = bench_case.color,
+        .dither = bench_case.dither,
+        .sample_strategy = bench_case.sample_strategy,
+        .sampler_policy = sampler_policy,
+        .input_width = in_w,
+        .input_height = in_h,
+        .output_columns = out_w,
+        .output_rows = out_h,
+        .iterations = iterations,
+        .ns_per_iter = ns_per_iter,
+        .median_ns = timings[timings.len / 2],
+        .p95_ns = timings[(timings.len * 95 + 99) / 100 - 1],
+        .ns_per_cell = ns_per_iter / cells,
+        .cells_per_sec = if (ns_per_iter == 0) 0 else (cells * std.time.ns_per_s) / ns_per_iter,
+        .allocated_bytes = first_bytes,
+        .allocations_first_render = first_allocs,
+        .allocations_steady_state = counting.alloc_count,
+        .bytes_allocated_first_render = first_bytes,
+        .bytes_allocated_steady_state = counting.bytes_allocated,
+        .cells_changed = stats.cells_changed,
+        .runs_emitted = stats.runs_emitted,
+        .ansi_bytes = stats.bytes_emitted,
+    };
+}
+
 fn runOnce(
     allocator: std.mem.Allocator,
     image: ascii.ImageView,
@@ -345,7 +517,7 @@ fn runOnce(
             std.mem.doNotOptimizeAway(score);
             return 0;
         },
-        .workspace_repeat, .prepared_workspace_repeat => unreachable,
+        .workspace_repeat, .prepared_workspace_repeat, .ansi_diff, .workspace_render_diff_repeat, .prepared_workspace_render_diff_repeat => unreachable,
     }
 }
 
@@ -360,7 +532,7 @@ fn qualityProxy(frame: ascii.Frame) u64 {
 
 fn allocatedBytes(bench_case: BenchCase, columns: u32, rows: u32) u64 {
     return switch (bench_case.kind) {
-        .ansi_encode_only, .quality_compare_only, .workspace_repeat, .prepared_workspace_repeat => 0,
+        .ansi_encode_only, .quality_compare_only, .workspace_repeat, .prepared_workspace_repeat, .ansi_diff, .workspace_render_diff_repeat, .prepared_workspace_render_diff_repeat => 0,
         else => {
             const cells = @as(u64, columns) * rows;
             const codepoint_bytes = cells * @sizeOf(u21);
@@ -413,7 +585,7 @@ fn insertionSortU64(values: []u64) void {
 }
 
 fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
-    try writer.print("{s},{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+    try writer.print("{s},{s},{d}x{d},{d}x{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
         result.name,
         @tagName(result.sampler_policy),
         result.input_width,
@@ -431,6 +603,8 @@ fn writeCsvRow(writer: *std.Io.Writer, result: BenchResult) !void {
         result.allocations_steady_state,
         result.bytes_allocated_first_render,
         result.bytes_allocated_steady_state,
+        result.cells_changed,
+        result.runs_emitted,
         result.ansi_bytes,
     });
 }
@@ -456,7 +630,7 @@ fn writeJsonResults(io: std.Io, out_path: []const u8, results: []const BenchResu
         \\    "cpu_arch": "{s}"
         \\  }},
         \\  "benchmark": {{
-        \\    "sampler": "workspace_reuse",
+        \\    "sampler": "ansi_diff",
         \\    "input_width": {d},
         \\    "input_height": {d},
         \\    "output_columns": {d},
@@ -517,6 +691,8 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         \\      "allocations_steady_state": {d},
         \\      "bytes_allocated_first_render": {d},
         \\      "bytes_allocated_steady_state": {d},
+        \\      "cells_changed": {d},
+        \\      "runs_emitted": {d},
         \\      "ansi_bytes": {d}
         \\    }}
     , .{
@@ -544,8 +720,67 @@ fn writeJsonResult(writer: *std.Io.Writer, result: BenchResult) !void {
         result.allocations_steady_state,
         result.bytes_allocated_first_render,
         result.bytes_allocated_steady_state,
+        result.cells_changed,
+        result.runs_emitted,
         result.ansi_bytes,
     });
+}
+
+fn runFrameDiffOnce(ansi_buf: []u8, previous: *const ascii.Frame, current: *const ascii.Frame) !ascii.AnsiDiffStats {
+    var fixed: std.Io.Writer = .fixed(ansi_buf);
+    const stats = try ascii.renderFrameDiffToWriter(&fixed, previous, current, .{});
+    std.debug.assert(fixed.end == stats.bytes_emitted);
+    return stats;
+}
+
+fn cloneFrame(allocator: std.mem.Allocator, source: ascii.Frame) !ascii.Frame {
+    var frame: ascii.Frame = .empty;
+    errdefer frame.deinit(allocator);
+    try frame.ensureCapacity(allocator, source.columns, source.rows, source.color);
+    @memcpy(frame.codepoints, source.codepoints);
+    @memcpy(frame.fg, source.fg);
+    @memcpy(frame.bg, source.bg);
+    return frame;
+}
+
+fn mutateFrameForDiff(frame: *ascii.Frame, scenario: DiffScenario) void {
+    const cells = frame.codepoints.len;
+    if (cells == 0) return;
+
+    switch (scenario) {
+        .none, .noop => {},
+        .single_cell => changeCell(frame, cells / 2),
+        .small_run => {
+            const row = frame.rows / 2;
+            const run_len = @min(@as(u32, 8), frame.columns);
+            const start_col = (frame.columns - run_len) / 2;
+            var col: u32 = 0;
+            while (col < run_len) : (col += 1) {
+                changeCell(frame, @as(usize, row) * frame.columns + start_col + col);
+            }
+        },
+        .one_row => {
+            const row = frame.rows / 2;
+            var col: u32 = 0;
+            while (col < frame.columns) : (col += 1) {
+                changeCell(frame, @as(usize, row) * frame.columns + col);
+            }
+        },
+        .full => {
+            var idx: usize = 0;
+            while (idx < cells) : (idx += 1) {
+                changeCell(frame, idx);
+            }
+        },
+    }
+}
+
+fn changeCell(frame: *ascii.Frame, idx: usize) void {
+    frame.codepoints[idx] = if (frame.codepoints[idx] == 'X') 'Y' else 'X';
+    if (frame.color != .none) {
+        frame.fg[idx] = .{ .r = 255, .g = 255, .b = 255 };
+        frame.bg[idx] = .{ .r = 0, .g = 0, .b = 0 };
+    }
 }
 
 fn makeImage(allocator: std.mem.Allocator, synthetic: Synthetic, width: u32, height: u32) !ascii.ImageView {

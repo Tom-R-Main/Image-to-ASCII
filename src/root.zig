@@ -1,6 +1,10 @@
 const core = @import("core.zig");
 
 pub const AxisSpan = core.AxisSpan;
+pub const AnsiDiffError = core.AnsiDiffError;
+pub const AnsiDiffMode = core.AnsiDiffMode;
+pub const AnsiDiffOptions = core.AnsiDiffOptions;
+pub const AnsiDiffStats = core.AnsiDiffStats;
 pub const ColorMode = core.ColorMode;
 pub const ColorStat = core.ColorStat;
 pub const DitherMode = core.DitherMode;
@@ -32,6 +36,7 @@ pub const defaultGlyphMaskBit = core.defaultGlyphMaskBit;
 pub const defaultGlyphTone = core.defaultGlyphTone;
 pub const prepareImage = core.prepareImage;
 pub const renderFrameToWriter = core.renderFrameToWriter;
+pub const renderFrameDiffToWriter = core.renderFrameDiffToWriter;
 pub const renderIntoWorkspace = core.renderIntoWorkspace;
 pub const renderPreparedToCells = core.renderPreparedToCells;
 pub const renderPreparedIntoWorkspace = core.renderPreparedIntoWorkspace;

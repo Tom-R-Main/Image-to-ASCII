@@ -71,6 +71,15 @@
   allocation counts/bytes. Current workspace rows reach zero steady-state
   allocations for same-shape renders, including prepared integral-luma reuse
   without span construction.
+- Added `AnsiDiffOptions`, `AnsiDiffStats`, and `renderFrameDiffToWriter` for
+  frame-to-frame dirty ANSI output. The diff compares `Frame` cell arrays
+  directly, rewrites cells on glyph or fg/bg changes, preserves background
+  spaces, coalesces row-contiguous dirty runs, and errors on shape/color mismatch
+  unless explicitly configured to full-render. `bench/results/ansi-diff.json`
+  adds diff-only and render-plus-diff repeat rows; current ReleaseFast output is
+  0 bytes for noop, 44 bytes for a single-cell change, 52 bytes for an 8-cell
+  run, 123 bytes for one changed row, and zero steady-state allocations for the
+  render-plus-diff repeat rows.
 - Moved ANSI emission to `src/ansi.zig` with a hand-rolled SGR encoder (manual
   decimal into a stack buffer, one `writeAll` per color change) instead of
   formatted `print`. Output is byte-identical; the encode step is ~2.5x faster on

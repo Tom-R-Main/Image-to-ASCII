@@ -76,6 +76,18 @@ try ascii.renderToWriter(writer, allocator, image, terminal, options);
 try ascii.renderFrameToWriter(writer, frame);
 ```
 
+For TUI redraws, diff two frames and emit only changed row-contiguous runs:
+
+```zig
+const stats = try ascii.renderFrameDiffToWriter(
+    writer,
+    &previous_frame,
+    &current_frame,
+    .{ .origin_row = 1, .origin_col = 1 },
+);
+_ = stats.bytes_emitted;
+```
+
 ### Render modes and support matrix
 
 `Options.mode` selects the renderer:
@@ -167,7 +179,7 @@ The package is a working library plus a thin CLI. Implemented:
   `mean` / `trimmed_mean` / `median`), computed in linear light,
 - selectable sampling strategy plus tuned span precomputation, reusable `PreparedImage` precompute, and reusable
   `RenderWorkspace` frame/scratch memory (zero steady-state allocations after the first same-shape render),
-- a fast hand-rolled ANSI writer with SGR run coalescing,
+- a fast hand-rolled ANSI writer with SGR run coalescing and frame-to-frame diff output for dirty TUI redraws,
 - a synthetic-image CLI and PPM/PAM fixture input (test-support, outside core),
 - a benchmark matrix with CSV output and tracked JSON baseline artifacts.
 
@@ -183,6 +195,7 @@ diff a new run against the baseline:
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/baseline.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/span-tuned.json
 zig build -Doptimize=ReleaseFast bench -- --out bench/results/workspace-reuse.json
+zig build -Doptimize=ReleaseFast bench -- --out bench/results/ansi-diff.json
 ```
 
 ### Quality harness
