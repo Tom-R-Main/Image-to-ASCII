@@ -7,7 +7,7 @@
   },
   "corpus": {
     "name": "quality-corpus",
-    "cases": 11
+    "cases": 12
   },
   "results": [
     {
@@ -138,6 +138,28 @@
       "psnr_db": 11.792333,
       "ssim": 0.650751,
       "edge_correlation": 0.670511,
+      "slash_golden": false,
+      "slash_golden_pass": false,
+      "observed_codepoint": 32
+    },
+    {
+      "fixture_name": "gradient-octant-fs",
+      "input_path": "testdata/corpus/grayscale-gradient.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
+      "mode": "partition",
+      "partition": "octant_2x4",
+      "color_mode": "none",
+      "sampler_policy": "direct_box",
+      "output_columns": 16,
+      "output_rows": 8,
+      "compare_width": 32,
+      "compare_height": 32,
+      "mse": 9471.945313,
+      "psnr_db": 8.366412,
+      "ssim": 0.102441,
+      "edge_correlation": 0.072763,
       "slash_golden": false,
       "slash_golden_pass": false,
       "observed_codepoint": 32

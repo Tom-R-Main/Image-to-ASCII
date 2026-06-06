@@ -232,7 +232,10 @@ What is wired today, and what is reserved but not yet implemented:
   palette entry **in linear light** at emit time (so the same frame can be emitted at any fidelity). `glyphshot` previews
   the quantized colors. ansi256 maps to the xterm 6×6×6 cube + grayscale ramp (indices 16–255); ansi16 to the standard
   system colors.
-- **Dither:** `none`, `ordered_2x2`, `ordered_4x4`. `floyd_steinberg` is reserved and not yet implemented.
+- **Dither:** `none`, `ordered_2x2`, `ordered_4x4`, and `floyd_steinberg`
+  (`--dither none|ordered-2x2|ordered-4x4|floyd-steinberg`). Floyd–Steinberg is error diffusion over the full sub-pixel
+  grid (partition + braille modes); it preserves average brightness on flat/gradient regions that a hard threshold would
+  drop, trading a little PSNR for no banding.
 
 ### Visual verification
 

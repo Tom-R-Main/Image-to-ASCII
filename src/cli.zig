@@ -406,6 +406,7 @@ fn parseDither(value: []const u8) ?ascii.DitherMode {
     if (std.mem.eql(u8, value, "none")) return .none;
     if (std.mem.eql(u8, value, "ordered-2x2")) return .ordered_2x2;
     if (std.mem.eql(u8, value, "ordered-4x4")) return .ordered_4x4;
+    if (std.mem.eql(u8, value, "floyd-steinberg")) return .floyd_steinberg;
     return null;
 }
 

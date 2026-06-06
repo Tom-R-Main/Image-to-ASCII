@@ -4,6 +4,15 @@
 
 ### Library
 
+- Implemented **Floyd–Steinberg dithering** (previously `floyd_steinberg` behaved
+  like `none`). It runs error diffusion over the whole sub-pixel luma grid once
+  per frame (crossing cell boundaries, unlike the per-pixel ordered matrices) and
+  the partition (quadrant/sextant/octant) and braille renderers read on/off bits
+  from it. It preserves average brightness — a flat 25%-gray field that a hard
+  threshold drops to blank cells keeps ~25% scattered ink — trading a little PSNR
+  for no banding (higher SSIM on gradients). `--dither floyd-steinberg`; corpus
+  case `gradient-octant-fs` (SSIM-gated). `glyphshot` gained `--dither` to preview
+  it. Half-block is unaffected (a 1×2 split with no dither path).
 - Implemented **ANSI 256 and 16-color output** (previously `ansi16`/`ansi256`
   returned `error.UnsupportedColorMode`). Quantization happens at emit time in the
   ANSI writer: the Frame always stores truecolor, and each color is mapped to the

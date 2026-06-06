@@ -38,6 +38,7 @@ const Options = struct {
     mode: ascii.RenderMode = .partition,
     partition: ascii.PartitionKind = .octant_2x4,
     color: ascii.ColorMode = .truecolor,
+    dither: ascii.DitherMode = .none,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -157,6 +158,7 @@ fn buildFrame(io: std.Io, allocator: std.mem.Allocator, options: Options) !ascii
         .mode = options.mode,
         .partition = options.partition,
         .fit = .contain,
+        .dither = options.dither,
     });
 }
 
@@ -286,6 +288,8 @@ fn parseArgs(args: []const []const u8) !Options {
             options.partition = parsePartition(try next(args, &i)) orelse return error.InvalidPartition;
         } else if (std.mem.eql(u8, arg, "--color")) {
             options.color = parseColor(try next(args, &i)) orelse return error.InvalidColor;
+        } else if (std.mem.eql(u8, arg, "--dither")) {
+            options.dither = parseDither(try next(args, &i)) orelse return error.InvalidDither;
         } else return error.UnknownArgument;
     }
     return options;
@@ -320,5 +324,13 @@ fn parseColor(v: []const u8) ?ascii.ColorMode {
     if (std.mem.eql(u8, v, "16")) return .ansi16;
     if (std.mem.eql(u8, v, "256")) return .ansi256;
     if (std.mem.eql(u8, v, "truecolor")) return .truecolor;
+    return null;
+}
+
+fn parseDither(v: []const u8) ?ascii.DitherMode {
+    if (std.mem.eql(u8, v, "none")) return .none;
+    if (std.mem.eql(u8, v, "ordered-2x2")) return .ordered_2x2;
+    if (std.mem.eql(u8, v, "ordered-4x4")) return .ordered_4x4;
+    if (std.mem.eql(u8, v, "floyd-steinberg")) return .floyd_steinberg;
     return null;
 }

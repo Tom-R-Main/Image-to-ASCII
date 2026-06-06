@@ -788,6 +788,13 @@ fn renderQuadrant(
     defer if (integral_opt) |*it| it.deinit(allocator);
     const integral = resolveIntegral(&integral_opt, context);
 
+    const fs_grid: ?[]bool = if (options.dither == .floyd_steinberg)
+        try buildFsGrid(allocator, image, terminal, integral, mapping, plan, options, 2, 2)
+    else
+        null;
+    defer if (fs_grid) |g| allocator.free(g);
+    const fs_w = mapping.columns * 2;
+
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
@@ -819,9 +826,11 @@ fn renderQuadrant(
             for (adjusted, 0..) |value, sub_idx| {
                 const sub_x: u32 = @intCast(sub_idx % 2);
                 const sub_y: u32 = @intCast(sub_idx / 2);
-                if (value >= partitionThreshold(options, col * 2 + sub_x, row * 2 + sub_y, avg, frame.color == .none)) {
-                    mask |= @as(u4, 1) << @intCast(sub_idx);
-                }
+                const on = if (fs_grid) |g|
+                    g[(row * 2 + sub_y) * fs_w + (col * 2 + sub_x)]
+                else
+                    value >= partitionThreshold(options, col * 2 + sub_x, row * 2 + sub_y, avg, frame.color == .none);
+                if (on) mask |= @as(u4, 1) << @intCast(sub_idx);
             }
 
             frame.codepoints[idx] = symbol.quadrantCodepoint(mask);
@@ -872,6 +881,13 @@ fn renderSubcell(
     defer if (integral_opt) |*it| it.deinit(allocator);
     const integral = resolveIntegral(&integral_opt, context);
 
+    const fs_grid: ?[]bool = if (options.dither == .floyd_steinberg)
+        try buildFsGrid(allocator, image, terminal, integral, mapping, plan, options, 2, rows)
+    else
+        null;
+    defer if (fs_grid) |g| allocator.free(g);
+    const fs_w = mapping.columns * 2;
+
     const count = rows * 2;
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
@@ -905,9 +921,11 @@ fn renderSubcell(
             while (sub_idx < count) : (sub_idx += 1) {
                 const sub_x = sub_idx % 2;
                 const sub_y = sub_idx / 2;
-                if (adjusted[sub_idx] >= partitionThreshold(options, col * 2 + sub_x, row * rows + sub_y, avg, frame.color == .none)) {
-                    mask |= @as(u8, 1) << @intCast(sub_idx);
-                }
+                const on = if (fs_grid) |g|
+                    g[(row * rows + sub_y) * fs_w + (col * 2 + sub_x)]
+                else
+                    adjusted[sub_idx] >= partitionThreshold(options, col * 2 + sub_x, row * rows + sub_y, avg, frame.color == .none);
+                if (on) mask |= @as(u8, 1) << @intCast(sub_idx);
             }
 
             frame.codepoints[idx] = glyphFn(mask);
@@ -943,6 +961,13 @@ fn renderBraille(
 
     const background = rgbFromBackground(terminal.background);
 
+    const fs_grid: ?[]bool = if (options.dither == .floyd_steinberg)
+        try buildFsGrid(allocator, image, terminal, integral, mapping, plan, options, 2, 4)
+    else
+        null;
+    defer if (fs_grid) |g| allocator.free(g);
+    const fs_w = mapping.columns * 2;
+
     var row: u32 = 0;
     while (row < mapping.rows) : (row += 1) {
         var col: u32 = 0;
@@ -959,12 +984,18 @@ fn renderBraille(
                     const dither_threshold = dither.threshold(options.dither, col * 2 + sx, row * 4 + sy);
                     if (frame.color == .none) {
                         const l = sampleCellLuma(image, terminal, integral, mapping, plan, col, row, 2, 4, sx, sy);
-                        if (luma.applyAdjustments(l, options.contrast, options.brightness, options.invert) >= dither_threshold) {
-                            mask |= symbol.brailleDotMask(sx, sy);
-                        }
+                        const on = if (fs_grid) |g|
+                            g[(row * 4 + sy) * fs_w + (col * 2 + sx)]
+                        else
+                            luma.applyAdjustments(l, options.contrast, options.brightness, options.invert) >= dither_threshold;
+                        if (on) mask |= symbol.brailleDotMask(sx, sy);
                     } else {
                         const s = sampleCell(image, terminal, mapping, plan, col, row, 2, 4, sx, sy);
-                        if (luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert) >= dither_threshold) {
+                        const on = if (fs_grid) |g|
+                            g[(row * 4 + sy) * fs_w + (col * 2 + sx)]
+                        else
+                            luma.applyAdjustments(s.luma, options.contrast, options.brightness, options.invert) >= dither_threshold;
+                        if (on) {
                             mask |= symbol.brailleDotMask(sx, sy);
                             on_buf[on_count] = s.linear;
                             on_count += 1;
@@ -1020,6 +1051,66 @@ fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
 fn partitionThreshold(options: Options, x: u32, y: u32, avg: f32, mono: bool) f32 {
     if (mono) return dither.threshold(options.dither, x, y);
     return thresholdFor(options, x, y, avg);
+}
+
+/// Floyd–Steinberg error diffusion over the whole sub-pixel luma grid, returning
+/// a binary on/off grid of `(cols*sub_w) x (rows*sub_h)`. Error diffusion is
+/// sequential and crosses cell boundaries, so — unlike ordered dithering — it
+/// must be computed once for the frame; the partition/braille renderers then read
+/// bits from it instead of thresholding each sub-pixel independently. Caller owns
+/// the returned slice.
+fn buildFsGrid(
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    integral: ?*const sample.IntegralLuma,
+    mapping: sample.Mapping,
+    plan: ?*const sample.SamplePlan,
+    options: Options,
+    sub_w: u32,
+    sub_h: u32,
+) ![]bool {
+    const gw = mapping.columns * sub_w;
+    const gh = mapping.rows * sub_h;
+    const lum = try allocator.alloc(f32, @as(usize, gw) * gh);
+    defer allocator.free(lum);
+
+    var row: u32 = 0;
+    while (row < mapping.rows) : (row += 1) {
+        var sy: u32 = 0;
+        while (sy < sub_h) : (sy += 1) {
+            var col: u32 = 0;
+            while (col < mapping.columns) : (col += 1) {
+                var sx: u32 = 0;
+                while (sx < sub_w) : (sx += 1) {
+                    const l = sampleCellLuma(image, terminal, integral, mapping, plan, col, row, sub_w, sub_h, sx, sy);
+                    const gx = col * sub_w + sx;
+                    const gy = row * sub_h + sy;
+                    lum[@as(usize, gy) * gw + gx] = luma.applyAdjustments(l, options.contrast, options.brightness, options.invert);
+                }
+            }
+        }
+    }
+
+    const out = try allocator.alloc(bool, @as(usize, gw) * gh);
+    var y: u32 = 0;
+    while (y < gh) : (y += 1) {
+        var x: u32 = 0;
+        while (x < gw) : (x += 1) {
+            const i = @as(usize, y) * gw + x;
+            const on = lum[i] >= 0.5;
+            out[i] = on;
+            const err = lum[i] - (if (on) @as(f32, 1.0) else 0.0);
+            if (x + 1 < gw) lum[i + 1] += err * (7.0 / 16.0);
+            if (y + 1 < gh) {
+                const below = i + gw;
+                if (x > 0) lum[below - 1] += err * (3.0 / 16.0);
+                lum[below] += err * (5.0 / 16.0);
+                if (x + 1 < gw) lum[below + 1] += err * (1.0 / 16.0);
+            }
+        }
+    }
+    return out;
 }
 
 const GlyphCell = struct {
@@ -1894,6 +1985,32 @@ test "mono partitions don't invert flat cells" {
         defer lit.deinit(allocator);
         try std.testing.expectEqual(@as(u21, '█'), lit.codepoints[0]);
     }
+}
+
+test "floyd-steinberg diffuses a flat field that a hard threshold drops" {
+    // A uniform 25%-gray field: a hard threshold (>=0.5) makes every sub-pixel
+    // off -> all blank cells, losing the tone. Error diffusion must scatter ~25%
+    // ink so the average brightness survives.
+    const allocator = std.testing.allocator;
+    const gray = [_]Rgba8{.{ .r = 64, .g = 64, .b = 64, .a = 255 }} ** (32 * 16);
+    const view: ImageView = .{ .width = 32, .height = 16, .stride = 32 * @sizeOf(Rgba8), .pixels = &gray };
+    const term: TerminalProfile = .{ .columns = 16, .rows = 8, .color = .none, .symbols = .block_legacy };
+
+    var plain = try renderToCells(allocator, view, term, .{ .mode = .partition, .partition = .octant_2x4, .fit = .stretch, .dither = .none });
+    defer plain.deinit(allocator);
+    var fs = try renderToCells(allocator, view, term, .{ .mode = .partition, .partition = .octant_2x4, .fit = .stretch, .dither = .floyd_steinberg });
+    defer fs.deinit(allocator);
+
+    var plain_ink: usize = 0;
+    var fs_ink: usize = 0;
+    for (plain.codepoints) |cp| if (cp != ' ') {
+        plain_ink += 1;
+    };
+    for (fs.codepoints) |cp| if (cp != ' ') {
+        fs_ink += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 0), plain_ink); // hard threshold drops it
+    try std.testing.expect(fs_ink > plain.codepoints.len / 2); // FS keeps the tone
 }
 
 test "octant renderer is rejected for basic-block terminals" {

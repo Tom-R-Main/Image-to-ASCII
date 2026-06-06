@@ -96,6 +96,9 @@ const corpus_cases = [_]CorpusCase{
     .{ .name = "checkerboard-sextant", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .partition, .partition = .sextant_2x3, .min_psnr_db = 6.0, .min_ssim = 0.5, .min_edge_correlation = 0.3 },
     .{ .name = "shape-edge-octant", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .min_psnr_db = 1.0, .min_ssim = 0.9, .min_edge_correlation = 0.9 },
     .{ .name = "gradient-density", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .density, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.0 },
+    // Floyd–Steinberg trades PSNR for perceptual quality (no banding), so it is
+    // gated on SSIM/edge rather than PSNR.
+    .{ .name = "gradient-octant-fs", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .dither = .floyd_steinberg, .min_psnr_db = 3.0, .min_ssim = 0.05, .min_edge_correlation = -0.5 },
     .{ .name = "color-bars-half-truecolor", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
     .{ .name = "color-bars-half-ansi256", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .ansi256, .min_psnr_db = 12.0, .min_ssim = 0.8, .min_edge_correlation = 0.5 },
     .{ .name = "color-bars-half-ansi16", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .ansi16, .min_psnr_db = 10.0, .min_ssim = 0.6, .min_edge_correlation = 0.4 },
@@ -606,6 +609,7 @@ fn parseDither(v: []const u8) ?ascii.DitherMode {
     if (std.mem.eql(u8, v, "none")) return .none;
     if (std.mem.eql(u8, v, "ordered-2x2")) return .ordered_2x2;
     if (std.mem.eql(u8, v, "ordered-4x4")) return .ordered_4x4;
+    if (std.mem.eql(u8, v, "floyd-steinberg")) return .floyd_steinberg;
     return null;
 }
 
