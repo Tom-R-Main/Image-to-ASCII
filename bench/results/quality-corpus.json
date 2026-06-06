@@ -68,13 +68,13 @@
       "output_rows": 8,
       "compare_width": 16,
       "compare_height": 32,
-      "mse": 49784.765625,
-      "psnr_db": 1.159839,
-      "ssim": 0.001669,
+      "mse": 0.000000,
+      "psnr_db": inf,
+      "ssim": 1.000000,
       "edge_correlation": 1.000000,
       "slash_golden": false,
       "slash_golden_pass": false,
-      "observed_codepoint": 9608
+      "observed_codepoint": 32
     },
     {
       "fixture_name": "checkerboard-sextant",
@@ -90,13 +90,13 @@
       "output_rows": 3,
       "compare_width": 14,
       "compare_height": 12,
-      "mse": 9077.535714,
-      "psnr_db": 8.551124,
-      "ssim": 0.642814,
-      "edge_correlation": 0.399428,
+      "mse": 9930.571429,
+      "psnr_db": 8.161061,
+      "ssim": 0.649317,
+      "edge_correlation": 0.481191,
       "slash_golden": false,
       "slash_golden_pass": false,
-      "observed_codepoint": 129806
+      "observed_codepoint": 9608
     },
     {
       "fixture_name": "shape-edge-octant",
@@ -112,13 +112,13 @@
       "output_rows": 8,
       "compare_width": 32,
       "compare_height": 32,
-      "mse": 46736.718750,
-      "psnr_db": 1.434221,
-      "ssim": 0.001753,
+      "mse": 0.000000,
+      "psnr_db": inf,
+      "ssim": 1.000000,
       "edge_correlation": 1.000000,
       "slash_golden": false,
       "slash_golden_pass": false,
-      "observed_codepoint": 9608
+      "observed_codepoint": 32
     },
     {
       "fixture_name": "gradient-density",

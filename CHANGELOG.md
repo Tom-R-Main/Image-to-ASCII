@@ -4,6 +4,18 @@
 
 ### Library
 
+- Fixed a **mono sub-cell partition inversion** (quadrant/sextant/octant with
+  `--color none` and no dither): the per-cell mean was used as the on/off
+  threshold, but in mono there is no second tone to recover, so a flat cell tied
+  every sub-pixel `>= avg` and filled solid — inverting flat/photographic
+  regions (a dark field rendered as nearly all-white). Mono partitions now
+  threshold at a fixed midpoint, matching the braille and half-block paths;
+  ordered dithering is unchanged. Caught by a render→reconstruct→image visual
+  test (a dark line-art's reconstruction mean was 0.93 vs the source's 0.22) and
+  measured: mono partition PSNR jumped ~8× on the corpus (e.g. thin-lines and
+  shape-edge now reconstruct exactly). Added a regression test and tightened the
+  corpus SSIM/edge gates so a re-inversion fails. The quality harness now also
+  accepts perfect (PSNR +inf) reconstructions instead of rejecting them.
 - Added **sextant (2×3) and octant (2×4) sub-cell partitions** — the higher-
   resolution block-mosaic modes that pack 6 and 8 sub-pixels per cell (vs 4 for
   quadrant), for sharper image rendering. They reuse the quadrant pipeline

@@ -806,7 +806,7 @@ fn renderQuadrant(
             for (adjusted, 0..) |value, sub_idx| {
                 const sub_x: u32 = @intCast(sub_idx % 2);
                 const sub_y: u32 = @intCast(sub_idx / 2);
-                if (value >= thresholdFor(options, col * 2 + sub_x, row * 2 + sub_y, avg)) {
+                if (value >= partitionThreshold(options, col * 2 + sub_x, row * 2 + sub_y, avg, frame.color == .none)) {
                     mask |= @as(u4, 1) << @intCast(sub_idx);
                 }
             }
@@ -892,7 +892,7 @@ fn renderSubcell(
             while (sub_idx < count) : (sub_idx += 1) {
                 const sub_x = sub_idx % 2;
                 const sub_y = sub_idx / 2;
-                if (adjusted[sub_idx] >= thresholdFor(options, col * 2 + sub_x, row * rows + sub_y, avg)) {
+                if (adjusted[sub_idx] >= partitionThreshold(options, col * 2 + sub_x, row * rows + sub_y, avg, frame.color == .none)) {
                     mask |= @as(u8, 1) << @intCast(sub_idx);
                 }
             }
@@ -996,6 +996,17 @@ fn thresholdFor(options: Options, x: u32, y: u32, avg: f32) f32 {
         .none, .floyd_steinberg => avg,
         .ordered_2x2, .ordered_4x4 => dither.threshold(options.dither, x, y),
     };
+}
+
+/// Threshold for a sub-cell partition. In color mode the cell mean splits the
+/// cell into its two dominant tones (the foreground/background clusters). In
+/// mono there is no second color to recover, so the mean is degenerate for flat
+/// cells (every sub-pixel ties `>= avg`, filling the cell solid and inverting
+/// flat regions); use a fixed midpoint instead, matching the braille and
+/// half-block paths. Ordered dithering overrides both with its matrix value.
+fn partitionThreshold(options: Options, x: u32, y: u32, avg: f32, mono: bool) f32 {
+    if (mono) return dither.threshold(options.dither, x, y);
+    return thresholdFor(options, x, y, avg);
 }
 
 const GlyphCell = struct {
@@ -1853,6 +1864,23 @@ test "sextant renderer maps a 2x3 fixture to a block sextant glyph" {
     );
     defer frame.deinit(allocator);
     try std.testing.expectEqual(@as(u21, 0x1FB00), frame.codepoints[0]);
+}
+
+test "mono partitions don't invert flat cells" {
+    // A uniform dark field must render as empty cells, not solid blocks. This
+    // guards the flat-cell threshold: a per-cell mean would tie every sub-pixel
+    // `>= avg` and fill the cell, inverting the image.
+    const allocator = std.testing.allocator;
+    const dark = [_]Rgba8{.{ .r = 51, .g = 51, .b = 51, .a = 255 }} ** 8; // luma ~0.2
+    const bright = [_]Rgba8{.{ .r = 204, .g = 204, .b = 204, .a = 255 }} ** 8; // ~0.8
+    inline for (.{ PartitionKind.quadrant_2x2, PartitionKind.sextant_2x3, PartitionKind.octant_2x4 }) |part| {
+        var dim = try renderToCells(allocator, .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &dark }, .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_legacy }, .{ .mode = .partition, .partition = part, .fit = .stretch });
+        defer dim.deinit(allocator);
+        try std.testing.expectEqual(@as(u21, ' '), dim.codepoints[0]);
+        var lit = try renderToCells(allocator, .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &bright }, .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_legacy }, .{ .mode = .partition, .partition = part, .fit = .stretch });
+        defer lit.deinit(allocator);
+        try std.testing.expectEqual(@as(u21, '█'), lit.codepoints[0]);
+    }
 }
 
 test "octant renderer is rejected for basic-block terminals" {

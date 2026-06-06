@@ -89,9 +89,12 @@ const QualityResult = struct {
 const corpus_cases = [_]CorpusCase{
     .{ .name = "slash-glyph-structure", .file = "slash-line.ppm", .width = 1, .height = 1, .mode = .glyph_structure, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01, .slash_golden = true },
     .{ .name = "checkerboard-braille", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .braille, .partition = .octant_2x4, .dither = .ordered_4x4, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
-    .{ .name = "thin-lines-quadrant", .file = "thin-lines.ppm", .width = 8, .height = 8, .mode = .partition, .partition = .quadrant_2x2, .min_psnr_db = 1.0, .min_ssim = 0.001, .min_edge_correlation = 0.5 },
-    .{ .name = "checkerboard-sextant", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .partition, .partition = .sextant_2x3, .min_psnr_db = 4.0, .min_ssim = 0.3, .min_edge_correlation = -0.5 },
-    .{ .name = "shape-edge-octant", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .min_psnr_db = 0.5, .min_ssim = 0.0005, .min_edge_correlation = -0.5 },
+    // thin-lines/shape-edge now reconstruct exactly in mono (PSNR +inf); SSIM and
+    // edge correlation are the live gates and would crater if flat-cell inversion
+    // ever returned.
+    .{ .name = "thin-lines-quadrant", .file = "thin-lines.ppm", .width = 8, .height = 8, .mode = .partition, .partition = .quadrant_2x2, .min_psnr_db = 1.0, .min_ssim = 0.9, .min_edge_correlation = 0.9 },
+    .{ .name = "checkerboard-sextant", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .partition, .partition = .sextant_2x3, .min_psnr_db = 6.0, .min_ssim = 0.5, .min_edge_correlation = 0.3 },
+    .{ .name = "shape-edge-octant", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .min_psnr_db = 1.0, .min_ssim = 0.9, .min_edge_correlation = 0.9 },
     .{ .name = "gradient-density", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .density, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.0 },
     .{ .name = "color-bars-half-truecolor", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
     .{ .name = "shape-glyph-tone", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .glyph_tone, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
@@ -380,9 +383,15 @@ fn symbolsForMode(mode: ascii.RenderMode, partition: ascii.PartitionKind) ascii.
     };
 }
 
+/// A perfect reconstruction has MSE 0 and PSNR +inf — the best possible outcome,
+/// not a failure. SSIM / edge correlation are still finite (1.0) and gate it.
+fn perfectReconstruction(result: QualityResult) bool {
+    return result.mse == 0 and std.math.isPositiveInf(result.psnr_db);
+}
+
 fn validateCorpusResult(result: QualityResult, case: CorpusCase) bool {
     if (!std.math.isFinite(result.mse)) return false;
-    if (!std.math.isFinite(result.psnr_db)) return false;
+    if (!std.math.isFinite(result.psnr_db) and !perfectReconstruction(result)) return false;
     if (!std.math.isFinite(result.ssim)) return false;
     if (!std.math.isFinite(result.edge_correlation)) return false;
     if (case.slash_golden and !result.slash_golden_pass) return false;
@@ -394,7 +403,7 @@ fn validateCorpusResult(result: QualityResult, case: CorpusCase) bool {
 
 fn writeThresholdFailure(writer: *std.Io.Writer, result: QualityResult, case: CorpusCase) !void {
     if (!std.math.isFinite(result.mse)) try writer.print("  fail: {s} mse is not finite\n", .{case.name});
-    if (!std.math.isFinite(result.psnr_db)) try writer.print("  fail: {s} psnr is not finite\n", .{case.name});
+    if (!std.math.isFinite(result.psnr_db) and !perfectReconstruction(result)) try writer.print("  fail: {s} psnr is not finite\n", .{case.name});
     if (!std.math.isFinite(result.ssim)) try writer.print("  fail: {s} ssim is not finite\n", .{case.name});
     if (!std.math.isFinite(result.edge_correlation)) try writer.print("  fail: {s} edge correlation is not finite\n", .{case.name});
     if (case.slash_golden and !result.slash_golden_pass) {

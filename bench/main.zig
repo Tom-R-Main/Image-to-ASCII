@@ -72,6 +72,10 @@ const cases = [_]BenchCase{
     .{ .name = "half-truecolor", .mode = .partition, .partition = .half_1x2, .color = .truecolor },
     .{ .name = "quadrant-none", .mode = .partition, .partition = .quadrant_2x2, .color = .none },
     .{ .name = "quadrant-truecolor", .synthetic = .color_mix, .mode = .partition, .partition = .quadrant_2x2, .color = .truecolor },
+    .{ .name = "sextant-none", .mode = .partition, .partition = .sextant_2x3, .color = .none },
+    .{ .name = "sextant-truecolor", .synthetic = .color_mix, .mode = .partition, .partition = .sextant_2x3, .color = .truecolor },
+    .{ .name = "octant-none", .mode = .partition, .partition = .octant_2x4, .color = .none },
+    .{ .name = "octant-truecolor", .synthetic = .color_mix, .mode = .partition, .partition = .octant_2x4, .color = .truecolor },
     .{ .name = "braille-none-dither", .synthetic = .checkerboard, .mode = .braille, .partition = .octant_2x4, .color = .none, .dither = .ordered_4x4 },
     .{ .name = "braille-truecolor", .synthetic = .color_mix, .mode = .braille, .partition = .octant_2x4, .color = .truecolor },
     .{ .name = "glyph-tone-none", .mode = .glyph_tone, .partition = .density_1x1, .color = .none },
@@ -414,7 +418,7 @@ fn runCase(
         .columns = out_w,
         .rows = out_h,
         .color = bench_case.color,
-        .symbols = if (bench_case.mode == .braille) .braille else if (bench_case.mode == .glyph_structure) .glyphs else .block_basic,
+        .symbols = symbolsForMode(bench_case.mode, bench_case.partition),
     };
     const options = ascii.Options{
         .mode = bench_case.mode,
@@ -1140,7 +1144,7 @@ fn runRealImageSmokeCase(io: std.Io, allocator: std.mem.Allocator, case: RealIma
         .columns = case.width,
         .rows = case.height,
         .color = case.color,
-        .symbols = symbolsForMode(case.mode),
+        .symbols = symbolsForMode(case.mode, case.partition),
     };
     const options = ascii.Options{
         .mode = case.mode,
@@ -1229,11 +1233,15 @@ fn writeRealImageSmokeResult(writer: *std.Io.Writer, result: RealImageSmokeResul
     });
 }
 
-fn symbolsForMode(mode: ascii.RenderMode) ascii.TerminalSymbols {
+fn symbolsForMode(mode: ascii.RenderMode, partition: ascii.PartitionKind) ascii.TerminalSymbols {
     return switch (mode) {
         .braille => .braille,
         .glyph_tone, .glyph_structure => .glyphs,
-        else => .block_basic,
+        .partition => switch (partition) {
+            .sextant_2x3, .octant_2x4 => .block_legacy,
+            else => .block_basic,
+        },
+        .density => .block_basic,
     };
 }
 
