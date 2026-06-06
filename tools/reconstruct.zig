@@ -72,7 +72,7 @@ pub fn reconstructForMode(allocator: std.mem.Allocator, frame: ascii.Frame, mode
     return out;
 }
 
-const StructuralKind = enum { braille, block, glyph };
+const StructuralKind = enum { braille, block, sextant, octant, glyph };
 
 const CellDims = struct { w: u32, h: u32 };
 
@@ -85,6 +85,8 @@ fn cellDims(mode: ascii.RenderMode) CellDims {
 
 fn structuralMask(cp: u21, mode: ascii.RenderMode) ?StructuralKind {
     if (cp >= 0x2800 and cp <= 0x28FF) return .braille;
+    if (ascii.octantMask(cp) != null) return .octant;
+    if (ascii.sextantMask(cp) != null) return .sextant;
     // Block glyphs carry structure; space is tonal (empty == black/bg either way).
     if (cp != ' ' and quadrantMaskOf(cp) != null) return .block;
     if (mode == .glyph_structure and ascii.defaultGlyphCoverage(cp) != null) return .glyph;
@@ -104,6 +106,22 @@ fn subpixelOn(kind: StructuralKind, cp: u21, sx: u32, sy: u32, dims: CellDims) b
             const qx = (sx * 2) / dims.w;
             const qy = (sy * 2) / dims.h;
             const bit = @as(u4, 1) << @intCast(qy * 2 + qx);
+            return (mask & bit) != 0;
+        },
+        .octant => {
+            // Octant is the native 2x4 sub-grid.
+            const mask = ascii.octantMask(cp).?;
+            const ox = (sx * 2) / dims.w;
+            const oy = (sy * 4) / dims.h;
+            const bit = @as(u8, 1) << @intCast(oy * 2 + ox);
+            return (mask & bit) != 0;
+        },
+        .sextant => {
+            // Map the 2x4 reconstruction grid onto the 2x3 sextant grid.
+            const mask = ascii.sextantMask(cp).?;
+            const ox = (sx * 2) / dims.w;
+            const oy = (sy * 3) / dims.h;
+            const bit = @as(u6, 1) << @intCast(oy * 2 + ox);
             return (mask & bit) != 0;
         },
         .glyph => {

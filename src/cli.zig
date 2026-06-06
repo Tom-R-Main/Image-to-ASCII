@@ -90,7 +90,7 @@ fn renderImage(writer: *std.Io.Writer, allocator: std.mem.Allocator, image: asci
             .columns = options.width,
             .rows = options.height,
             .color = options.color,
-            .symbols = if (options.mode == .braille) .braille else .block_basic,
+            .symbols = symbolTierFor(options),
         },
         .{
             .mode = options.mode,
@@ -363,10 +363,25 @@ fn parseMode(value: []const u8) ?ascii.RenderMode {
     return null;
 }
 
+/// Lowest terminal symbol tier each render needs. Sextant/octant require the
+/// Unicode "Symbols for Legacy Computing" tier (and octants, strictly, a
+/// Unicode 16 font); everything else is fine with basic block elements.
+fn symbolTierFor(options: CliOptions) ascii.TerminalSymbols {
+    if (options.mode == .braille) return .braille;
+    if (options.mode == .partition and
+        (options.partition == .sextant_2x3 or options.partition == .octant_2x4))
+    {
+        return .block_legacy;
+    }
+    return .block_basic;
+}
+
 fn parsePartition(value: []const u8) ?ascii.PartitionKind {
     if (std.mem.eql(u8, value, "density")) return .density_1x1;
     if (std.mem.eql(u8, value, "half")) return .half_1x2;
     if (std.mem.eql(u8, value, "quadrant")) return .quadrant_2x2;
+    if (std.mem.eql(u8, value, "sextant")) return .sextant_2x3;
+    if (std.mem.eql(u8, value, "octant")) return .octant_2x4;
     return null;
 }
 
@@ -453,7 +468,7 @@ fn describeCliError(err: anyerror) []const u8 {
         error.MissingValue => "expected a value after the previous flag",
         error.InvalidSynthetic => "synthetic input must be gradient, checkerboard, or color-bars",
         error.InvalidMode => "mode must be density, partition, braille, glyph-tone, or glyph-structure",
-        error.InvalidPartition => "partition must be density, half, or quadrant",
+        error.InvalidPartition => "partition must be density, half, quadrant, sextant, or octant",
         error.InvalidColor => "color must be none, 16, 256, or truecolor",
         error.InvalidFit => "fit must be contain, cover, or stretch",
         error.InvalidDither => "dither must be none, ordered-2x2, or ordered-4x4",
@@ -492,7 +507,7 @@ fn writeUsage(writer: *std.Io.Writer) !void {
         \\  --width N
         \\  --height N
         \\  --mode density|partition|braille|glyph-tone|glyph-structure
-        \\  --partition density|half|quadrant
+        \\  --partition density|half|quadrant|sextant|octant
         \\  --color none|16|256|truecolor
         \\  --fit contain|cover|stretch
         \\  --dither none|ordered-2x2|ordered-4x4

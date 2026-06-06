@@ -371,7 +371,8 @@ fn renderIntoWorkspaceWithContext(
             .density_1x1 => renderDensity(workspace, allocator, image, terminal, options, context),
             .half_1x2 => renderHalfBlock(workspace, allocator, image, terminal, options),
             .quadrant_2x2 => renderQuadrant(workspace, allocator, image, terminal, options, context),
-            else => Error.UnsupportedRenderMode,
+            .sextant_2x3 => renderSubcell(workspace, allocator, image, terminal, options, context, 3, sextantGlyph),
+            .octant_2x4 => renderSubcell(workspace, allocator, image, terminal, options, context, 4, octantGlyph),
         },
         .braille => renderBraille(workspace, allocator, image, terminal, options, context),
         .glyph_tone => renderGlyphTone(workspace, allocator, image, terminal, options, context),
@@ -818,6 +819,90 @@ fn renderQuadrant(
     }
 
     return;
+}
+
+fn sextantGlyph(mask: u8) u21 {
+    return symbol.sextantCodepoint(@intCast(mask & 0x3F));
+}
+
+fn octantGlyph(mask: u8) u21 {
+    return symbol.octantCodepoint(mask);
+}
+
+/// Generic 2×`rows` sub-cell partition renderer (sextant rows=3, octant rows=4).
+/// Mirrors renderQuadrant: threshold each sub-pixel against the cell mean (or the
+/// dither matrix) to a bitmask, map the mask to a glyph, then split the cell into
+/// two representative colors. Needs Unicode legacy-computing glyphs, so it is
+/// rejected for ascii-only and basic-block terminals.
+fn renderSubcell(
+    workspace: *RenderWorkspace,
+    allocator: std.mem.Allocator,
+    image: ImageView,
+    terminal: TerminalProfile,
+    options: Options,
+    context: RenderContext,
+    comptime rows: u32,
+    comptime glyphFn: fn (u8) u21,
+) !void {
+    if (terminal.symbols == .ascii_only or terminal.symbols == .block_basic) {
+        return Error.UnsupportedRenderMode;
+    }
+
+    const mapping = sample.fitMapping(image, terminal, options.fit);
+    const frame = &workspace.frame;
+    try frame.ensureCapacity(allocator, mapping.columns, mapping.rows, terminal.color);
+    const policy = renderSamplerPolicy(options, terminal, context);
+    try ensureWorkspaceSamplePlan(workspace, allocator, image, mapping, 2, rows, policy);
+    const plan = workspaceSamplePlanPtr(workspace, policy);
+
+    var integral_opt = try maybeBuildIntegral(allocator, image, terminal, policy);
+    defer if (integral_opt) |*it| it.deinit(allocator);
+    const integral = resolveIntegral(&integral_opt, context);
+
+    const count = rows * 2;
+    var row: u32 = 0;
+    while (row < mapping.rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < mapping.columns) : (col += 1) {
+            const idx = @as(usize, row) * mapping.columns + col;
+            var samples: [8]sample.Sample = undefined;
+            var adjusted: [8]f32 = undefined;
+            var sum: f32 = 0.0;
+
+            var sy: u32 = 0;
+            while (sy < rows) : (sy += 1) {
+                var sx: u32 = 0;
+                while (sx < 2) : (sx += 1) {
+                    const sub_idx = sy * 2 + sx;
+                    var l: f32 = undefined;
+                    if (frame.color == .none) {
+                        l = sampleCellLuma(image, terminal, integral, mapping, plan, col, row, 2, rows, sx, sy);
+                    } else {
+                        samples[sub_idx] = sampleCell(image, terminal, mapping, plan, col, row, 2, rows, sx, sy);
+                        l = samples[sub_idx].luma;
+                    }
+                    adjusted[sub_idx] = luma.applyAdjustments(l, options.contrast, options.brightness, options.invert);
+                    sum += adjusted[sub_idx];
+                }
+            }
+
+            const avg = sum / @as(f32, @floatFromInt(count));
+            var mask: u8 = 0;
+            var sub_idx: u32 = 0;
+            while (sub_idx < count) : (sub_idx += 1) {
+                const sub_x = sub_idx % 2;
+                const sub_y = sub_idx / 2;
+                if (adjusted[sub_idx] >= thresholdFor(options, col * 2 + sub_x, row * rows + sub_y, avg)) {
+                    mask |= @as(u8, 1) << @intCast(sub_idx);
+                }
+            }
+
+            frame.codepoints[idx] = glyphFn(mask);
+            if (frame.color != .none) {
+                assignPartitionColorsN(frame, idx, samples[0..count], mask, options.color_stat);
+            }
+        }
+    }
 }
 
 fn renderBraille(
@@ -1281,13 +1366,19 @@ fn absFloat(v: f32) f32 {
 }
 
 fn assignPartitionColors(frame: *Frame, idx: usize, samples: *const [4]sample.Sample, mask: u4, stat: ColorStat) void {
-    var fg_buf: [4]color.LinearRgb = undefined;
-    var bg_buf: [4]color.LinearRgb = undefined;
+    assignPartitionColorsN(frame, idx, samples, mask, stat);
+}
+
+/// Split up to 8 sub-cell samples into a foreground (mask bit set) and background
+/// representative color. Shared by the quadrant/sextant/octant renderers.
+fn assignPartitionColorsN(frame: *Frame, idx: usize, samples: []const sample.Sample, mask: u8, stat: ColorStat) void {
+    var fg_buf: [8]color.LinearRgb = undefined;
+    var bg_buf: [8]color.LinearRgb = undefined;
     var fg_count: usize = 0;
     var bg_count: usize = 0;
 
     for (samples, 0..) |s, sample_idx| {
-        if ((mask & (@as(u4, 1) << @intCast(sample_idx))) != 0) {
+        if ((mask & (@as(u8, 1) << @intCast(sample_idx))) != 0) {
             fg_buf[fg_count] = s.linear;
             fg_count += 1;
         } else {
@@ -1730,6 +1821,49 @@ test "quadrant renderer maps diagonal fixture to quadrant glyph" {
     defer frame.deinit(allocator);
 
     try std.testing.expectEqual(@as(u21, '▚'), frame.codepoints[0]);
+}
+
+test "octant renderer maps a 2x4 fixture to a block octant glyph" {
+    const allocator = std.testing.allocator;
+    const W: Rgba8 = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
+    const B: Rgba8 = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+    // Positions 1,2,3 lit (TL, TR, mid-left) -> BLOCK OCTANT-123 (U+1CD02).
+    const pixels = [_]Rgba8{ W, W, W, B, B, B, B, B };
+    var frame = try renderToCells(
+        allocator,
+        .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_legacy },
+        .{ .mode = .partition, .partition = .octant_2x4, .fit = .stretch },
+    );
+    defer frame.deinit(allocator);
+    try std.testing.expectEqual(@as(u21, 0x1CD02), frame.codepoints[0]);
+}
+
+test "sextant renderer maps a 2x3 fixture to a block sextant glyph" {
+    const allocator = std.testing.allocator;
+    const W: Rgba8 = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
+    const B: Rgba8 = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+    // Only the top-left sextant lit -> first block sextant (U+1FB00).
+    const pixels = [_]Rgba8{ W, B, B, B, B, B };
+    var frame = try renderToCells(
+        allocator,
+        .{ .width = 2, .height = 3, .stride = 2 * @sizeOf(Rgba8), .pixels = &pixels },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_legacy },
+        .{ .mode = .partition, .partition = .sextant_2x3, .fit = .stretch },
+    );
+    defer frame.deinit(allocator);
+    try std.testing.expectEqual(@as(u21, 0x1FB00), frame.codepoints[0]);
+}
+
+test "octant renderer is rejected for basic-block terminals" {
+    const allocator = std.testing.allocator;
+    const px = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }} ** 8;
+    try std.testing.expectError(Error.UnsupportedRenderMode, renderToCells(
+        allocator,
+        .{ .width = 2, .height = 4, .stride = 2 * @sizeOf(Rgba8), .pixels = &px },
+        .{ .columns = 1, .rows = 1, .color = .none, .symbols = .block_basic },
+        .{ .mode = .partition, .partition = .octant_2x4, .fit = .stretch },
+    ));
 }
 
 test "braille renderer maps vertical dots to Unicode layout" {

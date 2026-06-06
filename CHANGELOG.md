@@ -4,6 +4,21 @@
 
 ### Library
 
+- Added **sextant (2×3) and octant (2×4) sub-cell partitions** — the higher-
+  resolution block-mosaic modes that pack 6 and 8 sub-pixels per cell (vs 4 for
+  quadrant), for sharper image rendering. They reuse the quadrant pipeline
+  (threshold each sub-pixel → bitmask → glyph + two representative colors).
+  Sextant uses Unicode 13 "Block Sextants" (deterministic mapping); octant uses
+  the Unicode 16 block-octant table (generated from UnicodeData 16.0 `BLOCK
+  OCTANT-*` names), with the ~10 irregular non-block patterns resolved by a
+  provably-safe quadrant collapse — never a wrong code point. New glyph helpers
+  `symbol.sextantCodepoint`/`octantCodepoint` and inverses
+  `sextantMask`/`octantMask` (exposed for the quality harness, which now scores
+  both); CLI `--partition sextant|octant`. Both gate to the Unicode legacy-
+  computing terminal tier (octants additionally want a Unicode 16 font). Corpus
+  regression cases `checkerboard-sextant` and `shape-edge-octant` confirm the
+  fidelity gain (octant ≥ quadrant on every fixture measured).
+
 - Broadened the project scope from image-only ASCII conversion toward Cell
   Render: a terminal visual rendering library for images, diagrams, and TUI
   surfaces. Added `CellCanvas` as the shared terminal drawing substrate for

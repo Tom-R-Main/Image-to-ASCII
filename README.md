@@ -223,8 +223,10 @@ routing line. The remaining v0 limitation is that self-loops render as a small s
 
 What is wired today, and what is reserved but not yet implemented:
 
-- **Partitions:** `density_1x1`, `half_1x2`, `quadrant_2x2` are implemented. `sextant_2x3` and `octant_2x4` are declared
-  in the enum but return `error.UnsupportedRenderMode`.
+- **Partitions:** `density_1x1`, `half_1x2`, `quadrant_2x2`, `sextant_2x3` (Unicode 13), and `octant_2x4` (Unicode 16)
+  are implemented (`--partition density|half|quadrant|sextant|octant`). Sextant/octant pack 6/8 sub-pixels per cell for
+  higher resolution and need a Unicode legacy-computing-capable terminal (octants additionally need a Unicode 16 font);
+  they return `error.UnsupportedRenderMode` for ascii-only/basic-block terminals.
 - **Color:** `TerminalProfile.color` supports `none` and `truecolor`. `ansi16` / `ansi256` are reserved and currently
   return `error.UnsupportedColorMode`.
 - **Dither:** `none`, `ordered_2x2`, `ordered_4x4`. `floyd_steinberg` is reserved and not yet implemented.

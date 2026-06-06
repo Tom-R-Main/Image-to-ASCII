@@ -90,6 +90,8 @@ const corpus_cases = [_]CorpusCase{
     .{ .name = "slash-glyph-structure", .file = "slash-line.ppm", .width = 1, .height = 1, .mode = .glyph_structure, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01, .slash_golden = true },
     .{ .name = "checkerboard-braille", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .braille, .partition = .octant_2x4, .dither = .ordered_4x4, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
     .{ .name = "thin-lines-quadrant", .file = "thin-lines.ppm", .width = 8, .height = 8, .mode = .partition, .partition = .quadrant_2x2, .min_psnr_db = 1.0, .min_ssim = 0.001, .min_edge_correlation = 0.5 },
+    .{ .name = "checkerboard-sextant", .file = "checkerboard.ppm", .width = 7, .height = 3, .mode = .partition, .partition = .sextant_2x3, .min_psnr_db = 4.0, .min_ssim = 0.3, .min_edge_correlation = -0.5 },
+    .{ .name = "shape-edge-octant", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .min_psnr_db = 0.5, .min_ssim = 0.0005, .min_edge_correlation = -0.5 },
     .{ .name = "gradient-density", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .density, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.0 },
     .{ .name = "color-bars-half-truecolor", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
     .{ .name = "shape-glyph-tone", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .glyph_tone, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
@@ -178,7 +180,7 @@ fn evaluatePath(
         .columns = options.width,
         .rows = options.height,
         .color = options.color,
-        .symbols = symbolsForMode(options.mode),
+        .symbols = symbolsForMode(options.mode, options.partition),
     };
     const render_options = ascii.Options{
         .mode = options.mode,
@@ -273,7 +275,7 @@ fn writeSingleArtifacts(
         .columns = options.width,
         .rows = options.height,
         .color = options.color,
-        .symbols = symbolsForMode(options.mode),
+        .symbols = symbolsForMode(options.mode, options.partition),
     };
     const render_options = ascii.Options{
         .mode = options.mode,
@@ -366,11 +368,15 @@ fn optionsForCase(case: CorpusCase) Options {
     };
 }
 
-fn symbolsForMode(mode: ascii.RenderMode) ascii.TerminalSymbols {
+fn symbolsForMode(mode: ascii.RenderMode, partition: ascii.PartitionKind) ascii.TerminalSymbols {
     return switch (mode) {
         .braille => .braille,
         .glyph_tone, .glyph_structure => .glyphs,
-        else => .block_basic,
+        .partition => switch (partition) {
+            .sextant_2x3, .octant_2x4 => .block_legacy,
+            else => .block_basic,
+        },
+        .density => .block_basic,
     };
 }
 
@@ -565,6 +571,8 @@ fn parsePartition(v: []const u8) ?ascii.PartitionKind {
     if (std.mem.eql(u8, v, "density")) return .density_1x1;
     if (std.mem.eql(u8, v, "half")) return .half_1x2;
     if (std.mem.eql(u8, v, "quadrant")) return .quadrant_2x2;
+    if (std.mem.eql(u8, v, "sextant")) return .sextant_2x3;
+    if (std.mem.eql(u8, v, "octant")) return .octant_2x4;
     return null;
 }
 
