@@ -1,0 +1,8 @@
+C4Context
+    Person(cust, "Customer", "A bank customer")
+    Enterprise_Boundary(b, "Big Bank") {
+        System(banking, "Internet Banking", "Web app")
+        System_Ext(mail, "E-mail", "MS Exchange")
+    }
+    Rel(cust, banking, "Uses", "HTTPS")
+    Rel(banking, mail, "Sends", "SMTP")

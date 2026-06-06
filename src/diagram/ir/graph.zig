@@ -50,6 +50,20 @@ pub const ArrowKind = enum {
 /// Index into `GraphDiagram.nodes`.
 pub const NodeId = u32;
 
+/// Index into `GraphDiagram.clusters`.
+pub const ClusterId = u32;
+
+/// A container that groups a set of nodes behind a labeled border — a C4
+/// boundary or an architecture group. Clusters may nest via `parent`; a node's
+/// innermost cluster is recorded on the node itself (`Node.cluster`). The layout
+/// engine lays each cluster out as its own sub-graph and boxes it, so a foreign
+/// node can never land inside a cluster's border.
+pub const Cluster = struct {
+    id: []const u8,
+    label: []const u8,
+    parent: ?ClusterId = null,
+};
+
 /// A stack of text lines forming one section of a compartment node (e.g. a
 /// class's attributes, or its methods).
 pub const Compartment = []const []const u8;
@@ -61,6 +75,9 @@ pub const Node = struct {
     /// When non-null, the node renders as a multi-section "card" (a header plus
     /// these compartments) instead of a simple shape — used by class/ER diagrams.
     compartments: ?[]const Compartment = null,
+    /// Innermost cluster this node belongs to, if any. Used by the layout to
+    /// place the node inside its boundary/group box.
+    cluster: ?ClusterId = null,
 };
 
 /// Rendered height in cells of a node, given its compartments. A plain node is a
@@ -97,4 +114,7 @@ pub const GraphDiagram = struct {
     direction: Direction,
     nodes: []Node,
     edges: []Edge,
+    /// Boundary/group containers. Empty for diagrams without grouping, in which
+    /// case the layout takes its plain single-level path unchanged.
+    clusters: []const Cluster = &.{},
 };

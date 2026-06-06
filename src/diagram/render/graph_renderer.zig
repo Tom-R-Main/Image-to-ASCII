@@ -8,6 +8,7 @@ const cc = @import("../../canvas/cell_canvas.zig");
 const text_measure = @import("../../canvas/text_measure.zig");
 const ir = @import("../ir/graph.zig");
 const layered = @import("../layout/layered.zig");
+const cluster_layout = @import("../layout/cluster_layout.zig");
 const flowchart = @import("../mermaid/flowchart.zig");
 const state = @import("../mermaid/state.zig");
 const class = @import("../mermaid/class.zig");
@@ -34,7 +35,10 @@ pub fn renderGraph(
     diagram: ir.GraphDiagram,
     options: GraphRenderOptions,
 ) GraphRenderError!core.Frame {
-    var lay = try layered.layoutFlowchart(gpa, diagram, options.layout);
+    var lay = if (diagram.clusters.len > 0)
+        try cluster_layout.layoutClustered(gpa, diagram, options.layout)
+    else
+        try layered.layoutFlowchart(gpa, diagram, options.layout);
     defer lay.deinit();
 
     var canvas = try cc.CellCanvas.init(gpa, lay.columns, lay.rows, options.color);
@@ -42,6 +46,12 @@ pub fn renderGraph(
 
     const node_text: cc.TextOptions = .{ .fg = options.node_fg, .bg = options.node_bg };
     const edge_text: cc.TextOptions = .{ .fg = options.edge_fg, .bg = options.edge_bg };
+
+    // 0. Cluster/boundary boxes behind everything; their members and edges draw
+    //    over the (empty) interior afterwards.
+    for (lay.clusters) |cl| {
+        try drawClusterBox(&canvas, cl, options.glyph_set, node_text);
+    }
 
     // 1. Edge lines first; node boxes drawn over them sit only in clear cells.
     for (lay.edges) |edge| {
@@ -247,6 +257,20 @@ fn drawNodeShape(canvas: *cc.CellCanvas, rect: layered.Rect, shape: ir.NodeShape
         try canvas.drawText(x, row, g.vl, opts);
         try canvas.drawText(x + w - 1, row, g.vr, opts);
     }
+}
+
+/// A boundary/group container: a rounded border with the label inset on the top
+/// edge (`╭─ Label ───╮`). The layout guarantees the box is wide enough for the
+/// label plus its flanking spaces.
+fn drawClusterBox(canvas: *cc.CellCanvas, cl: layered.LaidOutCluster, glyph_set: cc.GlyphSet, opts: cc.TextOptions) !void {
+    try drawNodeShape(canvas, cl.rect, .round, glyph_set, opts);
+    if (cl.label.len == 0 or cl.rect.width < 6) return;
+    const x = cl.rect.x;
+    const y = cl.rect.y;
+    const lw: i32 = @intCast(text_measure.width(cl.label) catch return);
+    try canvas.drawText(x + 2, y, " ", opts);
+    try canvas.drawText(x + 3, y, cl.label, opts);
+    try canvas.drawText(x + 3 + lw, y, " ", opts);
 }
 
 fn drawPolyline(canvas: *cc.CellCanvas, points: []const layered.Point, opts: cc.LineOptions) !void {
@@ -629,6 +653,22 @@ test "renders a real C4 diagram (golden)" {
     const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/basic.mmd", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(src);
     const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+    var diag: ?c4.MermaidError = null;
+    var frame = try renderMermaidC4(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "renders a C4 diagram with a boundary box (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/boundary.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/boundary.golden.txt", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(golden);
     var diag: ?c4.MermaidError = null;
     var frame = try renderMermaidC4(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);

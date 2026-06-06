@@ -415,7 +415,9 @@ Card diagrams (`cardDiagram`, `requirementDiagram`) are a small repo-native comp
 (and parse real Mermaid requirement syntax). Real **C4** (`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/
 `C4Deployment`, with `Person(...)`/`System(...)`/`Container(...)`/`Rel(...)` function calls) and real
 **`architecture-beta`** (`group`/`service`/`junction` + `a:R --> L:b` connections) have dedicated parsers that handle
-their actual syntax. All of them lower to the same compartment nodes used by class/ER diagrams:
+their actual syntax. C4 boundaries and architecture groups draw **nested containment boxes** (a recursive-composite
+layout lays each group out, boxes it, and embeds it as one super-node, so members never leak out and inter-group edges
+meet the box border). All of them lower to the same compartment nodes used by class/ER diagrams:
 
 ```text
 +----------------------+                   +----------------------+

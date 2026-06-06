@@ -69,6 +69,7 @@ const ElementData = struct {
     stereotype: []const u8,
     tech: ?[]const u8 = null,
     descr: ?[]const u8 = null,
+    cluster: ?graph.ClusterId = null,
 };
 
 const Parser = struct {
@@ -78,7 +79,9 @@ const Parser = struct {
     elements: std.ArrayList(ElementData) = .empty,
     edges: std.ArrayList(graph.Edge) = .empty,
     index: std.StringHashMapUnmanaged(graph.NodeId) = .empty,
-    boundary_depth: u32 = 0,
+    clusters: std.ArrayList(graph.Cluster) = .empty,
+    /// Open boundaries, innermost last. A boundary becomes a cluster box.
+    boundary_stack: std.ArrayList(graph.ClusterId) = .empty,
 
     fn run(self: *Parser, source: []const u8) ParseError!graph.GraphDiagram {
         var line_no: u32 = 0;
@@ -101,15 +104,20 @@ const Parser = struct {
         }
 
         if (!seen_header) return self.fail(.missing_header, 1, 1, "expected a C4 diagram header");
-        if (self.boundary_depth != 0) return self.fail(.unexpected_token, line_no, 1, "unclosed boundary: expected '}'");
+        if (self.boundary_stack.items.len != 0) return self.fail(.unexpected_token, line_no, 1, "unclosed boundary: expected '}'");
 
         return try self.materialize();
     }
 
+    fn currentBoundary(self: *Parser) ?graph.ClusterId {
+        const n = self.boundary_stack.items.len;
+        return if (n == 0) null else self.boundary_stack.items[n - 1];
+    }
+
     fn parseStatement(self: *Parser, line: []const u8, line_no: u32) ParseError!void {
         if (std.mem.eql(u8, line, "}")) {
-            if (self.boundary_depth == 0) return self.fail(.unexpected_token, line_no, 1, "'}' without an open boundary");
-            self.boundary_depth -= 1;
+            if (self.boundary_stack.items.len == 0) return self.fail(.unexpected_token, line_no, 1, "'}' without an open boundary");
+            _ = self.boundary_stack.pop();
             return;
         }
 
@@ -125,13 +133,28 @@ const Parser = struct {
 
         if (isRel(kw)) return self.parseRel(kw, call.args, line_no);
 
-        // A trailing `{` makes this a boundary / container: flatten it.
-        if (call.opens_block) {
-            self.boundary_depth += 1;
-            return;
-        }
+        // A trailing `{` makes this a boundary / container: open a cluster.
+        if (call.opens_block) return self.parseBoundary(call.args);
 
         return self.parseElement(kw, call.args, line_no);
+    }
+
+    fn parseBoundary(self: *Parser, args: []const u8) ParseError!void {
+        var bares: [4][]const u8 = undefined;
+        var quoted: [6][]const u8 = undefined;
+        var nb: usize = 0;
+        var nq: usize = 0;
+        try collectArgs(args, &bares, &nb, &quoted, &nq);
+
+        const alias = if (nb > 0) bares[0] else if (nq > 0) quoted[0] else "boundary";
+        const label = if (nq > 0) quoted[0] else alias;
+        const cid: graph.ClusterId = @intCast(self.clusters.items.len);
+        try self.clusters.append(self.arena, .{
+            .id = try self.arena.dupe(u8, alias),
+            .label = try self.arena.dupe(u8, label),
+            .parent = self.currentBoundary(),
+        });
+        try self.boundary_stack.append(self.arena, cid);
     }
 
     fn parseElement(self: *Parser, kw: []const u8, args: []const u8, line_no: u32) ParseError!void {
@@ -157,6 +180,7 @@ const Parser = struct {
 
         const id = try self.upsertElement(alias);
         const e = &self.elements.items[id];
+        e.cluster = self.currentBoundary();
         e.label = try self.arena.dupe(u8, label);
         e.stereotype = if (stereo.external)
             try std.fmt.allocPrint(self.arena, "External {s}", .{stereo.name})
@@ -220,9 +244,14 @@ const Parser = struct {
                 comps[0] = try lines.toOwnedSlice(self.arena);
                 compartments = comps;
             }
-            nodes[i] = .{ .id = e.id, .label = e.label, .shape = .rect, .compartments = compartments };
+            nodes[i] = .{ .id = e.id, .label = e.label, .shape = .rect, .compartments = compartments, .cluster = e.cluster };
         }
-        return .{ .direction = .tb, .nodes = nodes, .edges = try self.edges.toOwnedSlice(self.arena) };
+        return .{
+            .direction = .tb,
+            .nodes = nodes,
+            .edges = try self.edges.toOwnedSlice(self.arena),
+            .clusters = try self.clusters.toOwnedSlice(self.arena),
+        };
     }
 
     fn fail(self: *Parser, kind: MermaidErrorKind, line: u32, column: u32, message: []const u8) ParseError {
@@ -408,7 +437,7 @@ test "external variants are marked in the stereotype" {
     try testing.expectEqualStrings("[External System]", r.diagram.nodes[0].compartments.?[0][0]);
 }
 
-test "boundaries are flattened, contents kept" {
+test "boundaries become nested clusters holding their members" {
     var r = try parseForTest(
         \\C4Context
         \\    Enterprise_Boundary(b0, "Bank") {
@@ -420,9 +449,17 @@ test "boundaries are flattened, contents kept" {
         \\    Rel(s1, s2, "writes")
     );
     defer r.deinit();
-    // Only the two real systems become nodes; boundaries draw no box.
+    // Two systems are nodes; the two boundaries are nested clusters.
     try testing.expectEqual(@as(usize, 2), r.diagram.nodes.len);
     try testing.expectEqual(@as(usize, 1), r.diagram.edges.len);
+    try testing.expectEqual(@as(usize, 2), r.diagram.clusters.len);
+    try testing.expectEqualStrings("Bank", r.diagram.clusters[0].label);
+    try testing.expectEqual(@as(?graph.ClusterId, null), r.diagram.clusters[0].parent);
+    try testing.expectEqualStrings("Internal", r.diagram.clusters[1].label);
+    try testing.expectEqual(@as(?graph.ClusterId, 0), r.diagram.clusters[1].parent);
+    // s1 sits directly in Bank; s2 sits in the nested Internal boundary.
+    try testing.expectEqual(@as(?graph.ClusterId, 0), r.diagram.nodes[0].cluster);
+    try testing.expectEqual(@as(?graph.ClusterId, 1), r.diagram.nodes[1].cluster);
 }
 
 test "styling directives and named args are ignored" {

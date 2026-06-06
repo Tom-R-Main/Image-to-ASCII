@@ -343,16 +343,34 @@ the shared graph IR and reuse the compartment-card renderer.
 `C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/`C4Deployment` headers;
 `Person(alias, "label", "descr")`, `System`/`Container`/`Component`/`Node` and
 their `_Ext`/`Db`/`Queue` variants; the `Rel` family (`Rel`, `BiRel`, `Rel_Back`,
-`Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries (parsed, flattened);
-`UpdateElementStyle`/`UpdateRelStyle`/`UpdateLayoutConfig`/`title` ignored. Each
-element renders as a card with a `[stereotype: tech]` line and a description.
-Deferred: boundary boxes, sprites/icons, per-rel direction hints.
+`Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries (`*_Boundary`/`Node`/
+`Deployment_Node`) now become **drawn cluster boxes** (see Containment below) and
+nest; `UpdateElementStyle`/`UpdateRelStyle`/`UpdateLayoutConfig`/`title` ignored.
+Each element renders as a card with a `[stereotype: tech]` line and a description.
+Deferred: sprites/icons, per-rel direction hints.
 
 **Architecture** (`src/diagram/mermaid/architecture.zig`) parses real
 `architecture-beta` — `group`/`service`/`junction` with `(icon)[title]` and
 `in {parent}`, and `idA:R --> L:idB` connections (`--`/`-->`/`<--`/`<-->`, with
-`{group}` modifiers). Deferred: group containment boxes, nesting, port sides, and
-icons (parsed but not drawn — groups render as plain nodes).
+`{group}` modifiers). Groups now become **drawn cluster boxes** containing their
+`in`-members and nesting via `group … in <group>`; an edge whose endpoint is a
+group id is routed to that group's box. Deferred: port sides and icons (parsed
+but not drawn).
+
+### Containment (boundary/group boxes)
+
+Both diagrams lower grouping to `GraphDiagram.clusters` (a `Cluster{id, label,
+parent}` tree) plus a `Node.cluster` back-reference. `cluster_layout.zig` renders
+them with a **recursive-composite** strategy: each cluster is laid out as its own
+sub-graph, boxed, and handed to the parent level as one fixed-size super-node;
+the parent's layout places loose nodes and cluster boxes together, then the
+sub-layout is blitted into the box interior. Consequences, by construction: a
+foreign node can never land inside a cluster box, nesting works to any depth, and
+an inter-cluster edge is lifted to the lowest common scope and routed to the
+cluster **box border** (not the exact inner node — matching how grouped diagrams
+are normally drawn). The same machinery is what future `mindmap`/`block` backends
+will reuse. Diagrams without clusters take the plain single-level layout path
+unchanged, so existing flowchart/state/class/ER output is byte-identical.
 
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
 routes to the flowchart, sequence, state, class, ER, card, C4, or architecture
@@ -395,9 +413,10 @@ labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
 class and ER diagrams render compartment cards (with UML relationship ends and
 cardinality respectively); card/C4/architecture diagrams render planning cards
 through the same compartment renderer (C4 and architecture parse their real
-syntax). Next: group/boundary containment boxes (C4 boundaries, architecture
-groups, sequence-style nesting), and spreading multiple same-side class
-decorations across the parent's edge.
+syntax), and C4 boundaries / architecture groups now draw nested containment
+boxes (see Containment above). Next: `mindmap`/`block` backends on top of the
+cluster machinery, and spreading multiple same-side class decorations across the
+parent's edge.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

@@ -147,21 +147,31 @@
   `C4Deployment` headers; `Person`/`System`/`Container`/`Component`/`Node` element
   calls (and `_Ext`/`Db`/`Queue` variants, plus a generic fallback) with
   `(alias, "label", "tech?", "descr?")` args; the `Rel` family (`Rel`, `BiRel`,
-  `Rel_Back`, `Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries (flattened);
+  `Rel_Back`, `Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries
+  (`*_Boundary`/`Node`/`Deployment_Node`) drawn as nested cluster boxes;
   and ignored styling directives (`UpdateElementStyle`/`UpdateRelStyle`/
   `UpdateLayoutConfig`/`title`) and `$tags`/`$link` named args. Elements render as
   compartment cards with a `[stereotype: tech]` line plus description. New public
-  API: `parseC4`, `renderMermaidC4`. Golden fixture in `testdata/mermaid/c4/`.
-  v0 limits: boundary boxes, sprites/icons, and per-rel direction hints are not
-  drawn.
+  API: `parseC4`, `renderMermaidC4`. Golden fixtures in `testdata/mermaid/c4/`.
+  v0 limits: sprites/icons and per-rel direction hints are not drawn.
 - Added a **real Mermaid `architecture-beta`** frontend
   (`src/diagram/mermaid/architecture.zig`): `group`/`service`/`junction`
   declarations with `(icon)[title]` and `in {parent}`, and `idA:R --> L:idB`
-  connections (`--`/`-->`/`<--`/`<-->`, with `{group}` modifiers). Lowers to
-  graph boxes + edges. New public API: `parseArchitecture`,
-  `renderMermaidArchitecture`. Golden fixture in `testdata/mermaid/architecture/`.
-  v0 limits: groups render as plain nodes (no containment box), and `in {parent}`
-  nesting, port sides, and icons are parsed but not drawn.
+  connections (`--`/`-->`/`<--`/`<-->`, with `{group}` modifiers). Groups become
+  drawn cluster boxes holding their `in`-members (nesting supported); an edge whose
+  endpoint is a group id is routed to that group's box. New public API:
+  `parseArchitecture`, `renderMermaidArchitecture`. Golden fixture in
+  `testdata/mermaid/architecture/`. v0 limits: port sides and icons are parsed but
+  not drawn.
+- Added **boundary/group containment** to the graph layout
+  (`src/diagram/layout/cluster_layout.zig`). The IR gained a `Cluster{id, label,
+  parent}` tree plus `Node.cluster`; a recursive-composite layout lays each
+  cluster out as its own sub-graph, boxes it, and embeds it in the parent level as
+  one super-node. By construction no foreign node lands inside a box, nesting works
+  to any depth, and inter-cluster edges meet the box border. Drives the C4-boundary
+  and architecture-group boxes above and is the foundation for future
+  `mindmap`/`block` backends. Graphs without clusters are unaffected (byte-identical
+  output). New `layered.layoutLevel` (size overrides), `Layout.clusters`.
 - Replaced the earlier card-frontend aliases that *accepted* `C4Context`/
   `architectureDiagram`/`c4Diagram` headers but rejected those diagrams' real
   syntax — the C4 and architecture headers now route to the real parsers above,

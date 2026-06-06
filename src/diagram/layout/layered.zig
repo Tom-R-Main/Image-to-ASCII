@@ -26,6 +26,17 @@ const text_measure = @import("../../canvas/text_measure.zig");
 pub const Point = struct { x: i32, y: i32 };
 pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
 
+/// A forced node footprint in cells, bypassing label-based sizing. Used to place
+/// a cluster's pre-laid-out sub-graph as a single super-node (see cluster_layout).
+pub const Footprint = struct { w: u32, h: u32 };
+
+/// A laid-out boundary/group box: an absolute rect plus its label. Populated only
+/// by the clustered layout path; empty for plain graphs.
+pub const LaidOutCluster = struct {
+    rect: Rect,
+    label: []const u8,
+};
+
 pub const LayoutOptions = struct {
     /// Gap cells between rank bands (along the primary axis).
     rank_gap: u32 = 3,
@@ -64,6 +75,7 @@ pub const Layout = struct {
     rows: u32,
     nodes: []LaidOutNode,
     edges: []RoutedEdge,
+    clusters: []const LaidOutCluster = &.{},
 
     pub fn deinit(self: *Layout) void {
         self.arena.deinit();
@@ -115,6 +127,18 @@ pub fn layoutFlowchart(
     diagram: ir.GraphDiagram,
     options: LayoutOptions,
 ) LayoutError!Layout {
+    return layoutLevel(gpa, diagram, options, null);
+}
+
+/// Lay out one graph level. `size_override`, when provided, is indexed by node id;
+/// a non-null entry forces that node's footprint instead of label-based sizing —
+/// used to embed a cluster's sub-layout as a single super-node.
+pub fn layoutLevel(
+    gpa: std.mem.Allocator,
+    diagram: ir.GraphDiagram,
+    options: LayoutOptions,
+    size_override: ?[]const ?Footprint,
+) LayoutError!Layout {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -130,6 +154,7 @@ pub fn layoutFlowchart(
         .options = options,
         .vertical = isVertical(diagram.direction),
         .axis = primaryAxis(diagram.direction),
+        .size_override = size_override,
     };
 
     const result = try eng.run();
@@ -149,6 +174,7 @@ const Engine = struct {
     options: LayoutOptions,
     vertical: bool,
     axis: Axis,
+    size_override: ?[]const ?Footprint = null,
 
     lnodes: std.ArrayList(LNode) = .empty,
     /// real node id -> lnode index (identity for the first N).
@@ -298,14 +324,15 @@ const Engine = struct {
 
     fn buildLNodes(self: *Engine) LayoutError!void {
         for (self.diagram.nodes, 0..) |node, i| {
+            const override: ?Footprint = if (self.size_override) |so| so[i] else null;
             var content_w = try text_measure.width(node.label);
             if (node.compartments) |comps| {
                 for (comps) |c| {
                     for (c) |line| content_w = @max(content_w, try text_measure.width(line));
                 }
             }
-            const w = content_w + 2 + 2 * self.options.pad_x;
-            const h: u32 = ir.cardHeight(node);
+            const w = if (override) |f| f.w else content_w + 2 + 2 * self.options.pad_x;
+            const h: u32 = if (override) |f| f.h else ir.cardHeight(node);
             const sec: u32 = if (self.vertical) w else h;
             const pri: u32 = if (self.vertical) h else w;
             try self.lnodes.append(self.arena, .{
