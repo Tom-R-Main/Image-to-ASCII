@@ -255,6 +255,14 @@ obvious. Fonts are **not** committed (size + licensing) — fetch one locally an
 Terminal.app screenshot (shows your terminal's own font/antialiasing) see `scripts/terminal-shot.sh`; that one needs the
 Mac awake, unlocked, and Screen Recording permission granted.
 
+For a one-shot contact sheet of the whole suite, `scripts/visual-gallery.sh` runs `glyphshot` over every diagram fixture
+and the image corpus (quadrant vs octant) and montages the results into `tools/out/gallery/_diagrams.png` and
+`_images.png`:
+
+```sh
+GLYPHSHOT_FONT=unifont.otf GLYPHSHOT_FONT_SMP=unifont_upper.otf scripts/visual-gallery.sh
+```
+
 ### Reuse APIs
 
 For animation or live resize, the library separates **source-derived precompute** from **output scratch** so repeated

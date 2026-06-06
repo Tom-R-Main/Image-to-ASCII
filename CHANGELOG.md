@@ -14,6 +14,12 @@
   and reports how many code points the font lacks. Fonts are fetched locally, never
   committed. Also added `scripts/terminal-shot.sh` for a literal Terminal.app
   screenshot (requires the Mac awake/unlocked + Screen Recording permission).
+- Added **`scripts/visual-gallery.sh`**: renders every diagram fixture and the
+  image corpus (quadrant vs octant) through `glyphshot` and montages them into
+  contact sheets under `tools/out/gallery/`, so a quality pass yields viewable
+  PNGs. Used to visually confirm the whole diagram suite (containment boxes, C4
+  stereotypes, class inheritance, ER cardinality, sequence blocks/notes) renders
+  with real glyphs and no `.notdef`.
 
 ### Library
 
