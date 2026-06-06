@@ -1,0 +1,6 @@
+C4Context
+    Person(user, "Banking Customer", "A customer of the bank")
+    System(sys, "Internet Banking", "Lets customers view accounts")
+    System_Ext(email, "E-mail System", "Sendmail")
+    Rel(user, sys, "Uses", "HTTPS")
+    Rel(sys, email, "Sends mail", "SMTP")

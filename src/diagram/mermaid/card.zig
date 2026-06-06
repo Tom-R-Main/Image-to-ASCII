@@ -4,8 +4,8 @@
 //! edges, so layout and rendering reuse the existing graph card renderer.
 //!
 //! Supported subset (v0):
-//!   headers:       `cardDiagram`, `requirementDiagram`, `architectureDiagram`,
-//!                  `c4Diagram`, `C4Context`, `C4Container`, `C4Component`
+//!   headers:       `cardDiagram`, `requirementDiagram`
+//!                  (real C4 and architecture-beta have dedicated parsers)
 //!   direction:     `direction TB|TD|LR|RL|BT`
 //!   card blocks:   `component API "API service" { ... }`
 //!                  `requirement Req1 [Must render plans] { ... }`
@@ -53,13 +53,10 @@ pub fn parseCard(
 }
 
 pub fn isHeader(word: []const u8) bool {
+    // Only the headers this generic grammar genuinely parses. Real C4 and
+    // architecture-beta have dedicated parsers (function-call / port-edge syntax).
     return std.mem.eql(u8, word, "cardDiagram") or
-        std.mem.eql(u8, word, "requirementDiagram") or
-        std.mem.eql(u8, word, "architectureDiagram") or
-        std.mem.eql(u8, word, "c4Diagram") or
-        std.mem.eql(u8, word, "C4Context") or
-        std.mem.eql(u8, word, "C4Container") or
-        std.mem.eql(u8, word, "C4Component");
+        std.mem.eql(u8, word, "requirementDiagram");
 }
 
 const CardData = struct {
@@ -446,10 +443,11 @@ test "rejects an unclosed card block" {
     try testing.expectError(error.MermaidSyntax, r);
 }
 
-test "recognizes card diagram header aliases" {
+test "recognizes only the generic and requirement headers" {
     try testing.expect(isHeader("cardDiagram"));
     try testing.expect(isHeader("requirementDiagram"));
-    try testing.expect(isHeader("architectureDiagram"));
-    try testing.expect(isHeader("c4Diagram"));
-    try testing.expect(isHeader("C4Context"));
+    // C4 and architecture have dedicated real-syntax parsers, not this one.
+    try testing.expect(!isHeader("C4Context"));
+    try testing.expect(!isHeader("architectureDiagram"));
+    try testing.expect(!isHeader("architecture-beta"));
 }

@@ -134,15 +134,38 @@
   small layout row drops from 9 to 8 allocations and from 33.2us to 14.8us
   median; small render drops from 13 to 11 allocations and from 34.6us to 18.6us
   median in this local ReleaseFast run.
-- Added a **card-diagram** frontend (`cardDiagram`, `requirementDiagram`,
-  `architectureDiagram`, `c4Diagram`, `C4Context`, `C4Container`,
-  `C4Component`) for requirement, architecture, and C4-style planning views.
-  Cards (`card`, `requirement`, `element`, `person`, `system`, `container`,
-  `component`, `database`, `queue`) lower to graph-IR compartment nodes, so the
-  implementation reuses the existing graph layout and card renderer instead of
-  adding a new renderer. Relationships support `-->`, `--`, `..>`, `..`, and
-  named requirement arrows such as `Agent - satisfies -> REQ-1`. New public API:
-  `parseCard`, `renderMermaidCard`. Golden fixture in `testdata/mermaid/card/`.
+- Added a **card-diagram** frontend (`cardDiagram`, `requirementDiagram`) — a
+  repo-native generic compartment-card grammar (also parses real Mermaid
+  requirement syntax). Cards (`card`, `requirement`, `element`, `person`,
+  `system`, `container`, `component`, `database`, `queue`) lower to graph-IR
+  compartment nodes, reusing the existing graph layout and card renderer.
+  Relationships support `-->`, `--`, `..>`, `..`, and named requirement arrows
+  such as `Agent - satisfies -> REQ-1`. New public API: `parseCard`,
+  `renderMermaidCard`. Golden fixture in `testdata/mermaid/card/`.
+- Added a **real Mermaid C4** frontend (`src/diagram/mermaid/c4.zig`) parsing the
+  actual function-call syntax: `C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/
+  `C4Deployment` headers; `Person`/`System`/`Container`/`Component`/`Node` element
+  calls (and `_Ext`/`Db`/`Queue` variants, plus a generic fallback) with
+  `(alias, "label", "tech?", "descr?")` args; the `Rel` family (`Rel`, `BiRel`,
+  `Rel_Back`, `Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries (flattened);
+  and ignored styling directives (`UpdateElementStyle`/`UpdateRelStyle`/
+  `UpdateLayoutConfig`/`title`) and `$tags`/`$link` named args. Elements render as
+  compartment cards with a `[stereotype: tech]` line plus description. New public
+  API: `parseC4`, `renderMermaidC4`. Golden fixture in `testdata/mermaid/c4/`.
+  v0 limits: boundary boxes, sprites/icons, and per-rel direction hints are not
+  drawn.
+- Added a **real Mermaid `architecture-beta`** frontend
+  (`src/diagram/mermaid/architecture.zig`): `group`/`service`/`junction`
+  declarations with `(icon)[title]` and `in {parent}`, and `idA:R --> L:idB`
+  connections (`--`/`-->`/`<--`/`<-->`, with `{group}` modifiers). Lowers to
+  graph boxes + edges. New public API: `parseArchitecture`,
+  `renderMermaidArchitecture`. Golden fixture in `testdata/mermaid/architecture/`.
+  v0 limits: groups render as plain nodes (no containment box), and `in {parent}`
+  nesting, port sides, and icons are parsed but not drawn.
+- Replaced the earlier card-frontend aliases that *accepted* `C4Context`/
+  `architectureDiagram`/`c4Diagram` headers but rejected those diagrams' real
+  syntax — the C4 and architecture headers now route to the real parsers above,
+  so pasting genuine Mermaid C4/architecture works instead of erroring.
 - Horizontal graph layouts now expand rank spacing when edge labels require more
   room, avoiding label/card collisions in LR architecture and C4-style diagrams.
 

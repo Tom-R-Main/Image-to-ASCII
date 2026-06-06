@@ -13,6 +13,8 @@ const state = @import("../mermaid/state.zig");
 const class = @import("../mermaid/class.zig");
 const er = @import("../mermaid/er.zig");
 const card = @import("../mermaid/card.zig");
+const c4 = @import("../mermaid/c4.zig");
+const architecture = @import("../mermaid/architecture.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -152,6 +154,30 @@ pub fn renderMermaidCard(
     diagnostic: *?card.MermaidError,
 ) (GraphRenderError || card.ParseError)!core.Frame {
     var parsed = try card.parseCard(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a real Mermaid C4 diagram and render it (elements as compartment cards).
+pub fn renderMermaidC4(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?c4.MermaidError,
+) (GraphRenderError || c4.ParseError)!core.Frame {
+    var parsed = try c4.parseC4(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a real Mermaid `architecture-beta` diagram and render it.
+pub fn renderMermaidArchitecture(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?architecture.MermaidError,
+) (GraphRenderError || architecture.ParseError)!core.Frame {
+    var parsed = try architecture.parseArchitecture(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -594,6 +620,38 @@ test "class card has two compartments and a unicode inheritance triangle" {
     }
     try testing.expect(dividers >= 2); // header/attrs and attrs/methods dividers
     try testing.expect(triangle);
+}
+
+test "renders a real C4 diagram (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/c4/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+    var diag: ?c4.MermaidError = null;
+    var frame = try renderMermaidC4(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "renders a real architecture-beta diagram (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/architecture/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/architecture/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+    var diag: ?architecture.MermaidError = null;
+    var frame = try renderMermaidArchitecture(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
 }
 
 test "renders a horizontal two-node flowchart" {

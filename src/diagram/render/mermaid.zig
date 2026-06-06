@@ -7,10 +7,12 @@ const core = @import("../../core.zig");
 const cc = @import("../../canvas/cell_canvas.zig");
 const errors = @import("../mermaid/errors.zig");
 const card = @import("../mermaid/card.zig");
+const c4 = @import("../mermaid/c4.zig");
+const architecture = @import("../mermaid/architecture.zig");
 const graph_renderer = @import("graph_renderer.zig");
 const sequence_renderer = @import("sequence_renderer.zig");
 
-pub const DiagramKind = enum { flowchart, sequence, state, class, er, card };
+pub const DiagramKind = enum { flowchart, sequence, state, class, er, card, c4, architecture };
 
 pub const MermaidRenderOptions = struct {
     glyph_set: cc.GlyphSet = .unicode_box,
@@ -36,6 +38,8 @@ pub fn detectKind(source: []const u8) ?DiagramKind {
         if (std.mem.eql(u8, word, "stateDiagram") or std.mem.eql(u8, word, "stateDiagram-v2")) return .state;
         if (std.mem.eql(u8, word, "classDiagram")) return .class;
         if (std.mem.eql(u8, word, "erDiagram")) return .er;
+        if (c4.isHeader(word)) return .c4;
+        if (architecture.isHeader(word)) return .architecture;
         if (card.isHeader(word)) return .card;
         return null;
     }
@@ -86,6 +90,14 @@ pub fn renderMermaid(
             .glyph_set = options.glyph_set,
             .color = options.color,
         }, diagnostic),
+        .c4 => graph_renderer.renderMermaidC4(gpa, source, .{
+            .glyph_set = options.glyph_set,
+            .color = options.color,
+        }, diagnostic),
+        .architecture => graph_renderer.renderMermaidArchitecture(gpa, source, .{
+            .glyph_set = options.glyph_set,
+            .color = options.color,
+        }, diagnostic),
     };
 }
 
@@ -111,7 +123,8 @@ test "detects diagram kinds from the header" {
     try testing.expectEqual(DiagramKind.class, detectKind("classDiagram\n class A\n").?);
     try testing.expectEqual(DiagramKind.er, detectKind("erDiagram\n A ||--o{ B\n").?);
     try testing.expectEqual(DiagramKind.card, detectKind("cardDiagram\n card A\n").?);
-    try testing.expectEqual(DiagramKind.card, detectKind("C4Context\n component API\n").?);
+    try testing.expectEqual(DiagramKind.c4, detectKind("C4Context\n Person(a, \"A\")\n").?);
+    try testing.expectEqual(DiagramKind.architecture, detectKind("architecture-beta\n group g(cloud)[G]\n").?);
     try testing.expect(detectKind("nonsense\n") == null);
     try testing.expect(detectKind("\n\n") == null);
 }
@@ -154,6 +167,20 @@ test "renderMermaid dispatches to the ER backend" {
 test "renderMermaid dispatches to the card backend" {
     var diag: ?errors.MermaidError = null;
     var frame = try renderMermaid(testing.allocator, "cardDiagram\n component API \"API\"\n", .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    try testing.expect(frame.columns > 0 and frame.rows > 0);
+}
+
+test "renderMermaid dispatches to the C4 backend" {
+    var diag: ?errors.MermaidError = null;
+    var frame = try renderMermaid(testing.allocator, "C4Context\n Person(u, \"User\")\n System(s, \"Sys\")\n Rel(u, s, \"uses\")\n", .{ .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    try testing.expect(frame.columns > 0 and frame.rows > 0);
+}
+
+test "renderMermaid dispatches to the architecture backend" {
+    var diag: ?errors.MermaidError = null;
+    var frame = try renderMermaid(testing.allocator, "architecture-beta\n group g(cloud)[G]\n service s(server)[S] in g\n s:R --> L:g\n", .{ .color = .none }, &diag);
     defer frame.deinit(testing.allocator);
     try testing.expect(frame.columns > 0 and frame.rows > 0);
 }

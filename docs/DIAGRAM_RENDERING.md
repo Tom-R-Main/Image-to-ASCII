@@ -309,9 +309,9 @@ still keep cardinality text inside the emitted canvas.
 
 ## Card Diagrams
 
-Card diagrams (`src/diagram/mermaid/card.zig`) are the first requirement /
-architecture / C4-style planning frontend. They intentionally use a compact,
-LLM-editable subset rather than full Mermaid requirement or C4 syntax:
+Card diagrams (`src/diagram/mermaid/card.zig`) are a compact, LLM-editable
+compartment-card grammar for planning views (the `requirementDiagram` header also
+parses real Mermaid requirement syntax):
 
 ```text
 cardDiagram
@@ -327,21 +327,36 @@ cardDiagram
   Agent --> Renderer : emits cardDiagram
 ```
 
-Supported headers are `cardDiagram`, `requirementDiagram`,
-`architectureDiagram`, `c4Diagram`, `C4Context`, `C4Container`, and
-`C4Component`. Supported card kinds are `card`, `requirement`, `element`,
-`person`, `system`, `container`, `component`, `database`, and `queue`. Block
-body lines are kept verbatim in one compartment, with the card kind prepended as
-`kind: ...`. Relationships support `-->`, `--`, `..>`, `..`, and requirement
-style named arrows such as `Agent - satisfies -> REQ-1`.
+Supported card headers are `cardDiagram` and `requirementDiagram`. Card kinds are
+`card`, `requirement`, `element`, `person`, `system`, `container`, `component`,
+`database`, and `queue`. Block body lines are kept verbatim in one compartment,
+with the card kind prepended as `kind: ...`. Relationships support `-->`, `--`,
+`..>`, `..`, and requirement-style named arrows such as `Agent - satisfies -> REQ-1`.
 
-The output reuses graph layout and the compartment-node renderer. For horizontal
-card diagrams, rank spacing expands to fit edge labels so architecture/C4 labels
-do not collide with card content.
+## C4 and Architecture (real Mermaid syntax)
+
+C4 and architecture-beta are graph-layout diagrams with their own real syntaxes,
+so they have dedicated parsers (not the generic card grammar) that both lower to
+the shared graph IR and reuse the compartment-card renderer.
+
+**C4** (`src/diagram/mermaid/c4.zig`) parses the real function-call syntax —
+`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/`C4Deployment` headers;
+`Person(alias, "label", "descr")`, `System`/`Container`/`Component`/`Node` and
+their `_Ext`/`Db`/`Queue` variants; the `Rel` family (`Rel`, `BiRel`, `Rel_Back`,
+`Rel_U/D/L/R`, `RelIndex`); brace-delimited boundaries (parsed, flattened);
+`UpdateElementStyle`/`UpdateRelStyle`/`UpdateLayoutConfig`/`title` ignored. Each
+element renders as a card with a `[stereotype: tech]` line and a description.
+Deferred: boundary boxes, sprites/icons, per-rel direction hints.
+
+**Architecture** (`src/diagram/mermaid/architecture.zig`) parses real
+`architecture-beta` — `group`/`service`/`junction` with `(icon)[title]` and
+`in {parent}`, and `idA:R --> L:idB` connections (`--`/`-->`/`<--`/`<-->`, with
+`{group}` modifiers). Deferred: group containment boxes, nesting, port sides, and
+icons (parsed but not drawn — groups render as plain nodes).
 
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart, sequence, state, class, ER, or card backend, so
-`cell-render mermaid file.mmd` handles any of them.
+routes to the flowchart, sequence, state, class, ER, card, C4, or architecture
+backend, so `cell-render mermaid file.mmd` handles any of them.
 
 ## Bounded Panes (Viewport)
 
@@ -371,15 +386,18 @@ size). With no bounds, output is natural (unchanged).
 
 ## Status and Next
 
-The `mermaid` CLI subcommand renders flowchart, sequence, state, class, ER, and card
-diagrams (`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
+The `mermaid` CLI subcommand renders flowchart, sequence, state, class, ER, card,
+C4, and architecture-beta diagrams
+(`cell-render mermaid diagram.mmd [--ascii|--unicode] [--color none|truecolor]`
 plus the viewport flags above); syntax errors print as `file:line:col: message`.
 Flowcharts have distinct node shapes, heavy/dotted strokes, and off-line edge
 labels; sequence diagrams cover notes, activations, and alt/opt/loop/par blocks;
 class and ER diagrams render compartment cards (with UML relationship ends and
-cardinality respectively); card diagrams render requirement/architecture/C4-style
-planning cards through the same compartment renderer. Next: spread multiple
-same-side class decorations across the parent's edge.
+cardinality respectively); card/C4/architecture diagrams render planning cards
+through the same compartment renderer (C4 and architecture parse their real
+syntax). Next: group/boundary containment boxes (C4 boundaries, architecture
+groups, sequence-style nesting), and spreading multiple same-side class
+decorations across the parent's edge.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
 dependency for core rendering.

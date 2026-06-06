@@ -411,9 +411,11 @@ state diagrams) reuse the flowchart graph layout and the compartment-node render
    +---------+  +-------+
 ```
 
-Card diagrams (`cardDiagram`, `requirementDiagram`, `architectureDiagram`, `c4Diagram`, and `C4Context`/`C4Container`/
-`C4Component` aliases) are a small repo-native subset for requirement, architecture, and C4-style planning views. Cards
-become the same compartment nodes used by class/ER diagrams:
+Card diagrams (`cardDiagram`, `requirementDiagram`) are a small repo-native compartment-card grammar for planning views
+(and parse real Mermaid requirement syntax). Real **C4** (`C4Context`/`C4Container`/`C4Component`/`C4Dynamic`/
+`C4Deployment`, with `Person(...)`/`System(...)`/`Container(...)`/`Rel(...)` function calls) and real
+**`architecture-beta`** (`group`/`service`/`junction` + `a:R --> L:b` connections) have dedicated parsers that handle
+their actual syntax. All of them lower to the same compartment nodes used by class/ER diagrams:
 
 ```text
 +----------------------+                   +----------------------+

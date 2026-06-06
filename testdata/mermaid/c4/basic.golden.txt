@@ -1,0 +1,24 @@
+   +------------------------+   
+   |    Banking Customer    |   
+   +------------------------+   
+   | [Person]               |   
+   | A customer of the bank |   
+   +------------------------+   
+                |               
+                | Uses          
+                v               
++------------------------------+
+|       Internet Banking       |
++------------------------------+
+| [System]                     |
+| Lets customers view accounts |
++------------------------------+
+                |               
+                | Sends mail    
+                v               
+      +-------------------+     
+      |   E-mail System   |     
+      +-------------------+     
+      | [External System] |     
+      | Sendmail          |     
+      +-------------------+     
