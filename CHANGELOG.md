@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Tooling
+
+- Added **`glyphshot`** (`zig build glyphshot`, `tools/glyphshot.zig`): rasterizes
+  a render (image or Mermaid diagram) through a real TrueType/OpenType font via the
+  vendored `stb_truetype`, compositing each cell's glyph fg-over-bg into a PPM. It
+  is the headless equivalent of a terminal screenshot — the actual glyph shapes,
+  with no display/window-server/screen-recording permission — so visual checks run
+  unattended. Supports a `--fallback-font` chain (octants/sextants live in Unicode
+  16's SMP while quadrants/space are BMP, so two font files cover an octant render)
+  and reports how many code points the font lacks. Fonts are fetched locally, never
+  committed. Also added `scripts/terminal-shot.sh` for a literal Terminal.app
+  screenshot (requires the Mac awake/unlocked + Screen Recording permission).
+
 ### Library
 
 - Fixed a **mono sub-cell partition inversion** (quadrant/sextant/octant with

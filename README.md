@@ -231,6 +231,30 @@ What is wired today, and what is reserved but not yet implemented:
   return `error.UnsupportedColorMode`.
 - **Dither:** `none`, `ordered_2x2`, `ordered_4x4`. `floyd_steinberg` is reserved and not yet implemented.
 
+### Visual verification
+
+To see what a render *actually looks like* — not just its metrics — `glyphshot` rasterizes a render through a real
+TrueType/OpenType font (via the vendored `stb_truetype`) and writes a PPM. It's the headless equivalent of a terminal
+screenshot: it shows the genuine glyph shapes, with no display, window server, or screen-recording permission, so it runs
+unattended (and in CI).
+
+```sh
+# Image, octant mode. Octants/sextants live in Unicode 16's SMP, so point --font
+# at a Unicode-16 font and --fallback-font at one covering BMP quadrants/space.
+# (e.g. GNU Unifont: unifont_upper-*.otf for SMP, unifont-*.otf for BMP.)
+zig build glyphshot -- --input photo.jpg --mode partition --partition octant \
+    --color truecolor --width 80 --height 40 \
+    --font unifont_upper.otf --fallback-font unifont.otf -o out.ppm
+magick out.ppm out.png            # then open out.png
+
+zig build glyphshot -- --mermaid diagram.mmd --font font.ttf -o out.ppm
+```
+
+It reports how many distinct code points the font lacks (rendered as `.notdef`), so missing octant/sextant repertoire is
+obvious. Fonts are **not** committed (size + licensing) — fetch one locally and pass it with `--font`. For a literal
+Terminal.app screenshot (shows your terminal's own font/antialiasing) see `scripts/terminal-shot.sh`; that one needs the
+Mac awake, unlocked, and Screen Recording permission granted.
+
 ### Reuse APIs
 
 For animation or live resize, the library separates **source-derived precompute** from **output scratch** so repeated

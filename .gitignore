@@ -10,3 +10,9 @@ zig-pkg/
 bench/corpus/
 tools/out/
 testdata/generated/
+
+# Fonts used by `zig build glyphshot` are fetched locally, never committed
+# (size + licensing). See README "Visual verification".
+*.ttf
+*.otf
+*.ttc

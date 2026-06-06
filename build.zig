@@ -101,6 +101,26 @@ pub fn build(b: *std.Build) void {
         .root_module = calibrate_mod,
     });
 
+    const glyphshot_mod = b.createModule(.{
+        .root_source_file = b.path("tools/glyphshot.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "image_to_ascii", .module = mod },
+            .{ .name = "image_loader", .module = image_loader_mod },
+        },
+    });
+    glyphshot_mod.addIncludePath(b.path("tools/stb"));
+    glyphshot_mod.addCSourceFile(.{
+        .file = b.path("tools/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
+    const glyphshot_exe = b.addExecutable(.{
+        .name = "image-to-ascii-glyphshot",
+        .root_module = glyphshot_mod,
+    });
+
     const run_step = b.step("run", "Run the CLI");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -129,6 +149,13 @@ pub fn build(b: *std.Build) void {
         calibrate_cmd.addArgs(args);
     }
     calibrate_step.dependOn(&calibrate_cmd.step);
+
+    const glyphshot_step = b.step("glyphshot", "Rasterize a render through a real TTF to a PPM (headless visual check)");
+    const glyphshot_cmd = b.addRunArtifact(glyphshot_exe);
+    if (b.args) |args| {
+        glyphshot_cmd.addArgs(args);
+    }
+    glyphshot_step.dependOn(&glyphshot_cmd.step);
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
