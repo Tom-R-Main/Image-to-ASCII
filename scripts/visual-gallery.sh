@@ -20,9 +20,26 @@ cd "$repo"
 
 font="${1:-${GLYPHSHOT_FONT:-}}"
 font_smp="${2:-${GLYPHSHOT_FONT_SMP:-}}"
-[ -n "$font" ] || { echo "need a BMP font: arg1 or \$GLYPHSHOT_FONT (see header)" >&2; exit 1; }
-[ -f "$font" ] || { echo "font not found: $font" >&2; exit 1; }
+
+# Auto-discover a BMP font (diagrams + quadrant) when none is given, so the
+# gallery works with zero setup. Menlo is the macOS last resort (covers box
+# drawing + quadrant, but not octant/sextant).
+if [ -z "$font" ]; then
+  for cand in ~/.fonts/*.otf ~/.fonts/*.ttf /Library/Fonts/*.ttf /Library/Fonts/*.otf \
+              "$HOME/Library/Fonts"/*.ttf "$HOME/Library/Fonts"/*.otf /System/Library/Fonts/Menlo.ttc; do
+    [ -f "$cand" ] && { font="$cand"; break; }
+  done
+fi
+[ -n "$font" ] && [ -f "$font" ] || { echo "no BMP font found; set \$GLYPHSHOT_FONT (see header)" >&2; exit 1; }
+
+# Auto-discover an SMP font (octant/sextant glyphs) — optional.
+if [ -z "$font_smp" ]; then
+  for cand in ~/.fonts/unifont_upper*.otf "$HOME/Library/Fonts"/unifont_upper*.otf /tmp/unifont_upper.otf; do
+    [ -f "$cand" ] && { font_smp="$cand"; break; }
+  done
+fi
 command -v magick >/dev/null || { echo "ImageMagick (magick) required" >&2; exit 1; }
+echo "font: $font${font_smp:+  smp: $font_smp}"
 
 out="tools/out/gallery"
 mkdir -p "$out"

@@ -52,7 +52,14 @@
   contact sheets under `tools/out/gallery/`, so a quality pass yields viewable
   PNGs. Used to visually confirm the whole diagram suite (containment boxes, C4
   stereotypes, class inheritance, ER cardinality, sequence blocks/notes) renders
-  with real glyphs and no `.notdef`.
+  with real glyphs and no `.notdef`. Now auto-discovers a font (falls back to a
+  system font) so it runs with no setup.
+- Made the **visual loop automatic**: `scripts/review.sh` runs the whole
+  develop→verify loop in one command — gates (fmt/build/test) + corpus
+  (PSNR/SSIM/edge) + gallery PNGs — exiting non-zero only on gate/corpus failure
+  (the gallery is best-effort). `scripts/install-hooks.sh` installs it as a git
+  `pre-push` hook (`scripts/hooks/pre-push`), so every push drops fresh gallery
+  PNGs and blocks on a failing gate (bypass once with `SKIP_REVIEW=1 git push`).
 
 ### Library
 

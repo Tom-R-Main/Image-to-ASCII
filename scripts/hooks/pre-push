@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the full review (gates + corpus + gallery PNGs) before push.
+# Installed by scripts/install-hooks.sh. Set SKIP_REVIEW=1 to bypass once.
+[ "${SKIP_REVIEW:-0}" = "1" ] && exit 0
+repo="$(git rev-parse --show-toplevel)"
+exec "$repo/scripts/review.sh"

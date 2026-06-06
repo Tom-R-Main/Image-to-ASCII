@@ -269,6 +269,11 @@ and the image corpus (quadrant vs octant) and montages the results into `tools/o
 GLYPHSHOT_FONT=unifont.otf GLYPHSHOT_FONT_SMP=unifont_upper.otf scripts/visual-gallery.sh
 ```
 
+`scripts/visual-gallery.sh` auto-discovers a font when none is given (falling back to a system font), so it runs with no
+setup. `scripts/review.sh` wraps the whole develop→verify loop in one command — **gates** (fmt/build/test) + **corpus**
+(PSNR/SSIM/edge) + **gallery** PNGs — and `scripts/install-hooks.sh` installs it as a git `pre-push` hook so the visual
+check happens automatically on every push (bypass once with `SKIP_REVIEW=1 git push`).
+
 ### Reuse APIs
 
 For animation or live resize, the library separates **source-derived precompute** from **output scratch** so repeated
