@@ -4,6 +4,15 @@
 
 ### Library
 
+- Added a **Mermaid `mindmap`** frontend (`src/diagram/mermaid/mindmap.zig`): an
+  indentation-defined tree lowered to the graph IR (nodes + parent→child edges),
+  rendered by the existing layered engine as a left-to-right tree (no new layout).
+  Nesting by leading-whitespace depth; node shapes `[square]`/`(round)`/
+  `((circle))`/`{{hexagon}}`/`))bang((`/`)cloud(`/bare-text; `::icon`/`:::class`
+  stripped. New public API: `parseMindmap`, `renderMermaidMindmap`; golden fixture
+  in `testdata/mermaid/mindmap/`. (`block-beta` was evaluated and deliberately
+  deferred: it is a column-packed grid, not a layered graph, so it needs a
+  dedicated grid layout rather than being misrepresented by the DAG engine.)
 - Implemented **Floyd–Steinberg dithering** (previously `floyd_steinberg` behaved
   like `none`). It runs error diffusion over the whole sub-pixel luma grid once
   per frame (crossing cell boundaries, unlike the per-pixel ordered matrices) and

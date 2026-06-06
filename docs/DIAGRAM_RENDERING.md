@@ -372,9 +372,25 @@ are normally drawn). The same machinery is what future `mindmap`/`block` backend
 will reuse. Diagrams without clusters take the plain single-level layout path
 unchanged, so existing flowchart/state/class/ER output is byte-identical.
 
+## Mindmap
+
+Mindmaps (`src/diagram/mermaid/mindmap.zig`) are indentation-defined trees, which
+the layered engine renders natively, so the parser lowers to the graph IR (nodes
+plus parent→child edges) with no new layout. Nesting is by leading-whitespace
+depth; node shapes `[square]`, `(round)`, `((circle))`, `{{hexagon}}`, `))bang((`,
+`)cloud(`, or bare text map onto the IR shapes, and `::icon(...)`/`:::class`
+decorations are stripped. Mermaid draws mindmaps radially; we render a
+left-to-right layered tree (the honest fit for the existing engine). New public
+API: `parseMindmap`, `renderMermaidMindmap`. Golden fixture in
+`testdata/mermaid/mindmap/`.
+
+`block-beta` is deliberately **not** lowered to this engine: it is a column-packed
+grid, not a layered graph, so it needs a dedicated grid layout (future work)
+rather than being misrepresented as a DAG.
+
 A `renderMermaid` dispatcher detects the diagram type from the header keyword and
-routes to the flowchart, sequence, state, class, ER, card, C4, or architecture
-backend, so `cell-render mermaid file.mmd` handles any of them.
+routes to the flowchart, sequence, state, class, ER, card, C4, architecture, or
+mindmap backend, so `cell-render mermaid file.mmd` handles any of them.
 
 ## Bounded Panes (Viewport)
 

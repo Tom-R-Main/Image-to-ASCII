@@ -284,6 +284,7 @@ fn writeMermaidUsage(writer: *std.Io.Writer) !void {
         \\  cardDiagram / requirementDiagram — generic compartment cards.
         \\  C4Context/C4Container/C4Component/C4Dynamic/C4Deployment — real C4.
         \\  architecture-beta — groups/services/junctions with connections.
+        \\  mindmap         — indentation tree, rendered as a layered tree.
         \\Comments use %%. Unsupported syntax is reported as file:line:col.
         \\
     );

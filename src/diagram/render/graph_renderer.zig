@@ -16,6 +16,7 @@ const er = @import("../mermaid/er.zig");
 const card = @import("../mermaid/card.zig");
 const c4 = @import("../mermaid/c4.zig");
 const architecture = @import("../mermaid/architecture.zig");
+const mindmap = @import("../mermaid/mindmap.zig");
 
 pub const GraphRenderOptions = struct {
     layout: layered.LayoutOptions = .{},
@@ -188,6 +189,18 @@ pub fn renderMermaidArchitecture(
     diagnostic: *?architecture.MermaidError,
 ) (GraphRenderError || architecture.ParseError)!core.Frame {
     var parsed = try architecture.parseArchitecture(gpa, source, diagnostic);
+    defer parsed.deinit();
+    return renderGraph(gpa, parsed.diagram, options);
+}
+
+/// Parse a Mermaid `mindmap` (an indentation tree) and render it.
+pub fn renderMermaidMindmap(
+    gpa: std.mem.Allocator,
+    source: []const u8,
+    options: GraphRenderOptions,
+    diagnostic: *?mindmap.MermaidError,
+) (GraphRenderError || mindmap.ParseError)!core.Frame {
+    var parsed = try mindmap.parseMindmap(gpa, source, diagnostic);
     defer parsed.deinit();
     return renderGraph(gpa, parsed.diagram, options);
 }
@@ -656,6 +669,22 @@ test "renders a real C4 diagram (golden)" {
     defer testing.allocator.free(golden);
     var diag: ?c4.MermaidError = null;
     var frame = try renderMermaidC4(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
+    defer frame.deinit(testing.allocator);
+    const got = try frameToText(testing.allocator, frame);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(golden, got);
+}
+
+test "renders a mindmap tree (golden)" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const src = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/mindmap/basic.mmd", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(src);
+    const golden = try std.Io.Dir.cwd().readFileAlloc(io, "testdata/mermaid/mindmap/basic.golden.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(golden);
+    var diag: ?mindmap.MermaidError = null;
+    var frame = try renderMermaidMindmap(testing.allocator, src, .{ .glyph_set = .ascii, .color = .none }, &diag);
     defer frame.deinit(testing.allocator);
     const got = try frameToText(testing.allocator, frame);
     defer testing.allocator.free(got);

@@ -9,10 +9,11 @@ const errors = @import("../mermaid/errors.zig");
 const card = @import("../mermaid/card.zig");
 const c4 = @import("../mermaid/c4.zig");
 const architecture = @import("../mermaid/architecture.zig");
+const mindmap = @import("../mermaid/mindmap.zig");
 const graph_renderer = @import("graph_renderer.zig");
 const sequence_renderer = @import("sequence_renderer.zig");
 
-pub const DiagramKind = enum { flowchart, sequence, state, class, er, card, c4, architecture };
+pub const DiagramKind = enum { flowchart, sequence, state, class, er, card, c4, architecture, mindmap };
 
 pub const MermaidRenderOptions = struct {
     glyph_set: cc.GlyphSet = .unicode_box,
@@ -40,6 +41,7 @@ pub fn detectKind(source: []const u8) ?DiagramKind {
         if (std.mem.eql(u8, word, "erDiagram")) return .er;
         if (c4.isHeader(word)) return .c4;
         if (architecture.isHeader(word)) return .architecture;
+        if (mindmap.isHeader(word)) return .mindmap;
         if (card.isHeader(word)) return .card;
         return null;
     }
@@ -98,6 +100,10 @@ pub fn renderMermaid(
             .glyph_set = options.glyph_set,
             .color = options.color,
         }, diagnostic),
+        .mindmap => graph_renderer.renderMermaidMindmap(gpa, source, .{
+            .glyph_set = options.glyph_set,
+            .color = options.color,
+        }, diagnostic),
     };
 }
 
@@ -125,6 +131,7 @@ test "detects diagram kinds from the header" {
     try testing.expectEqual(DiagramKind.card, detectKind("cardDiagram\n card A\n").?);
     try testing.expectEqual(DiagramKind.c4, detectKind("C4Context\n Person(a, \"A\")\n").?);
     try testing.expectEqual(DiagramKind.architecture, detectKind("architecture-beta\n group g(cloud)[G]\n").?);
+    try testing.expectEqual(DiagramKind.mindmap, detectKind("mindmap\n  root\n").?);
     try testing.expect(detectKind("nonsense\n") == null);
     try testing.expect(detectKind("\n\n") == null);
 }

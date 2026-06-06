@@ -457,7 +457,8 @@ Card diagrams (`cardDiagram`, `requirementDiagram`) are a small repo-native comp
 **`architecture-beta`** (`group`/`service`/`junction` + `a:R --> L:b` connections) have dedicated parsers that handle
 their actual syntax. C4 boundaries and architecture groups draw **nested containment boxes** (a recursive-composite
 layout lays each group out, boxes it, and embeds it as one super-node, so members never leak out and inter-group edges
-meet the box border). All of them lower to the same compartment nodes used by class/ER diagrams:
+meet the box border). **`mindmap`** (indentation tree) renders as a left-to-right layered tree. All of them lower to the
+same compartment nodes / graph IR used by class/ER diagrams:
 
 ```text
 +----------------------+                   +----------------------+
