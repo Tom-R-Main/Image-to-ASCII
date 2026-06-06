@@ -174,7 +174,10 @@ fn symbolTier(mode: ascii.RenderMode, partition: ascii.PartitionKind) ascii.Term
 
 fn cellColor(frame: ascii.Frame, idx: usize, fg: bool) ascii.Rgb8 {
     if (frame.color == .none) return if (fg) .{ .r = 235, .g = 235, .b = 235 } else .{ .r = 12, .g = 12, .b = 16 };
-    return if (fg) frame.fg[idx] else frame.bg[idx];
+    // Preview the actually-displayed color: identity for truecolor, the nearest
+    // palette entry for ansi256/ansi16 — so the PNG shows what the terminal emits.
+    const raw = if (fg) frame.fg[idx] else frame.bg[idx];
+    return ascii.displayColor(raw, frame.color);
 }
 
 fn mix(bg: u8, fg: u8, a: u32) u8 {
@@ -314,6 +317,8 @@ fn parsePartition(v: []const u8) ?ascii.PartitionKind {
 
 fn parseColor(v: []const u8) ?ascii.ColorMode {
     if (std.mem.eql(u8, v, "none")) return .none;
+    if (std.mem.eql(u8, v, "16")) return .ansi16;
+    if (std.mem.eql(u8, v, "256")) return .ansi256;
     if (std.mem.eql(u8, v, "truecolor")) return .truecolor;
     return null;
 }

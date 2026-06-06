@@ -97,6 +97,8 @@ const corpus_cases = [_]CorpusCase{
     .{ .name = "shape-edge-octant", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .partition, .partition = .octant_2x4, .min_psnr_db = 1.0, .min_ssim = 0.9, .min_edge_correlation = 0.9 },
     .{ .name = "gradient-density", .file = "grayscale-gradient.ppm", .width = 16, .height = 8, .mode = .density, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.0 },
     .{ .name = "color-bars-half-truecolor", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .truecolor, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
+    .{ .name = "color-bars-half-ansi256", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .ansi256, .min_psnr_db = 12.0, .min_ssim = 0.8, .min_edge_correlation = 0.5 },
+    .{ .name = "color-bars-half-ansi16", .file = "color-bars.ppm", .width = 13, .height = 5, .mode = .partition, .partition = .half_1x2, .color = .ansi16, .min_psnr_db = 10.0, .min_ssim = 0.6, .min_edge_correlation = 0.4 },
     .{ .name = "shape-glyph-tone", .file = "shape-edge.ppm", .width = 16, .height = 8, .mode = .glyph_tone, .min_psnr_db = 3.0, .min_ssim = 0.01, .min_edge_correlation = 0.01 },
     .{ .name = "low-contrast-glyph-structure", .file = "low-contrast-edge.ppm", .width = 8, .height = 4, .mode = .glyph_structure, .min_psnr_db = 6.0, .min_ssim = 0.001, .min_edge_correlation = -0.1 },
 };
@@ -587,6 +589,8 @@ fn parsePartition(v: []const u8) ?ascii.PartitionKind {
 
 fn parseColor(v: []const u8) ?ascii.ColorMode {
     if (std.mem.eql(u8, v, "none")) return .none;
+    if (std.mem.eql(u8, v, "16")) return .ansi16;
+    if (std.mem.eql(u8, v, "256")) return .ansi256;
     if (std.mem.eql(u8, v, "truecolor")) return .truecolor;
     return null;
 }

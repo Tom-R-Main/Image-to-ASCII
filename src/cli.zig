@@ -250,6 +250,8 @@ fn parseOverflow(value: []const u8) ?ascii.OverflowMode {
 /// and truecolor; ANSI 16/256 are not available for diagrams yet.
 fn parseMermaidColor(value: []const u8) ?ascii.ColorMode {
     if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, "16")) return .ansi16;
+    if (std.mem.eql(u8, value, "256")) return .ansi256;
     if (std.mem.eql(u8, value, "truecolor")) return .truecolor;
     return null;
 }
@@ -605,14 +607,11 @@ test "CLI checkerboard Braille golden output" {
     try std.testing.expectEqualStrings("⢝⢽⢝⢽\n⢝⢽⢝⢽\n", writer.buffered());
 }
 
-test "CLI accepts ansi color flags even though core rejects them for now" {
-    const args = [_][]const u8{
-        "cell-render",
-        "--color",
-        "256",
-    };
-    const options = try parseArgs(&args);
-    try std.testing.expectEqual(ascii.ColorMode.ansi256, options.color);
+test "CLI parses ansi256/ansi16 color flags" {
+    const c256 = try parseArgs(&[_][]const u8{ "cell-render", "--color", "256" });
+    try std.testing.expectEqual(ascii.ColorMode.ansi256, c256.color);
+    const c16 = try parseArgs(&[_][]const u8{ "cell-render", "--color", "16" });
+    try std.testing.expectEqual(ascii.ColorMode.ansi16, c16.color);
 }
 
 test "CLI parses input path" {

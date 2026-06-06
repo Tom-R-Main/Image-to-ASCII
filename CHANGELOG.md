@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Library
+
+- Implemented **ANSI 256 and 16-color output** (previously `ansi16`/`ansi256`
+  returned `error.UnsupportedColorMode`). Quantization happens at emit time in the
+  ANSI writer: the Frame always stores truecolor, and each color is mapped to the
+  nearest palette entry **in linear light** (perceptually sounder than raw sRGB) —
+  ansi256 to the xterm 6×6×6 cube + grayscale ramp (indices 16–255), ansi16 to the
+  standard system colors, emitting `38;5;n`/`48;5;n` and `30-37;90-97`/`40-47;
+  100-107` respectively. New `color.ansi256Index`/`ansi16Index` (+`*Rgb` inverses)
+  and `displayColor(c, mode)`; the latter lets `glyphshot` preview and the quality
+  harness score the quantized result. CLI `--color none|16|256|truecolor` (images
+  and Mermaid). Corpus gates `color-bars-half-ansi256` and `-ansi16` lock the
+  fidelity (truecolor 19.6 dB → 256 19.3 dB → 16 16.1 dB on color-bars). Benefits
+  every terminal/CI/SSH session that isn't truecolor.
+
 ### Tooling
 
 - Added **`glyphshot`** (`zig build glyphshot`, `tools/glyphshot.zig`): rasterizes

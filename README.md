@@ -227,8 +227,11 @@ What is wired today, and what is reserved but not yet implemented:
   are implemented (`--partition density|half|quadrant|sextant|octant`). Sextant/octant pack 6/8 sub-pixels per cell for
   higher resolution and need a Unicode legacy-computing-capable terminal (octants additionally need a Unicode 16 font);
   they return `error.UnsupportedRenderMode` for ascii-only/basic-block terminals.
-- **Color:** `TerminalProfile.color` supports `none` and `truecolor`. `ansi16` / `ansi256` are reserved and currently
-  return `error.UnsupportedColorMode`.
+- **Color:** `TerminalProfile.color` supports `none`, `ansi16`, `ansi256`, and `truecolor`
+  (`--color none|16|256|truecolor`). Frames always store truecolor; `ansi16`/`ansi256` are quantized to the nearest
+  palette entry **in linear light** at emit time (so the same frame can be emitted at any fidelity). `glyphshot` previews
+  the quantized colors. ansi256 maps to the xterm 6×6×6 cube + grayscale ramp (indices 16–255); ansi16 to the standard
+  system colors.
 - **Dither:** `none`, `ordered_2x2`, `ordered_4x4`. `floyd_steinberg` is reserved and not yet implemented.
 
 ### Visual verification

@@ -131,6 +131,99 @@ pub fn rgbFromRgba(src: pixel.Rgba8, background: pixel.Rgba8) pixel.Rgb8 {
     return encodeSrgb(compositeOver(src, background));
 }
 
+// -- terminal palette quantization (ansi256 / ansi16) -----------------------
+//
+// Quantization happens at emit time: the Frame always stores truecolor, and the
+// ANSI writer maps each color to the nearest palette entry. Matching is done in
+// linear light (perceptually sounder than raw sRGB distance), consistent with the
+// rest of the color pipeline.
+
+/// The six per-channel levels of the xterm 6x6x6 color cube.
+const cube_levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
+
+/// Standard xterm 16-color palette (system colors 0-15). Terminal themes vary;
+/// these are the widely used xterm defaults and give a predictable mapping.
+const ansi16_palette = [16]pixel.Rgb8{
+    .{ .r = 0, .g = 0, .b = 0 },       .{ .r = 205, .g = 0, .b = 0 },
+    .{ .r = 0, .g = 205, .b = 0 },     .{ .r = 205, .g = 205, .b = 0 },
+    .{ .r = 0, .g = 0, .b = 238 },     .{ .r = 205, .g = 0, .b = 205 },
+    .{ .r = 0, .g = 205, .b = 205 },   .{ .r = 229, .g = 229, .b = 229 },
+    .{ .r = 127, .g = 127, .b = 127 }, .{ .r = 255, .g = 0, .b = 0 },
+    .{ .r = 0, .g = 255, .b = 0 },     .{ .r = 255, .g = 255, .b = 0 },
+    .{ .r = 92, .g = 92, .b = 255 },   .{ .r = 255, .g = 0, .b = 255 },
+    .{ .r = 0, .g = 255, .b = 255 },   .{ .r = 255, .g = 255, .b = 255 },
+};
+
+fn linDistSq(a: pixel.Rgb8, b: pixel.Rgb8) f32 {
+    const dr = luma.srgbToLinear(a.r) - luma.srgbToLinear(b.r);
+    const dg = luma.srgbToLinear(a.g) - luma.srgbToLinear(b.g);
+    const db = luma.srgbToLinear(a.b) - luma.srgbToLinear(b.b);
+    return dr * dr + dg * dg + db * db;
+}
+
+fn nearestCubeIdx(v: u8) usize {
+    var best: usize = 0;
+    var best_d: f32 = std.math.floatMax(f32);
+    const lv = luma.srgbToLinear(v);
+    for (cube_levels, 0..) |level, i| {
+        const d = lv - luma.srgbToLinear(level);
+        if (d * d < best_d) {
+            best_d = d * d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/// Nearest xterm-256 palette index for `c` (cube or grayscale ramp, whichever is
+/// closer in linear light). Indices 16..255 only — the theme-dependent 0..15 are
+/// avoided so output is predictable across terminals.
+pub fn ansi256Index(c: pixel.Rgb8) u8 {
+    const ri = nearestCubeIdx(c.r);
+    const gi = nearestCubeIdx(c.g);
+    const bi = nearestCubeIdx(c.b);
+    const cube_rgb = pixel.Rgb8{ .r = cube_levels[ri], .g = cube_levels[gi], .b = cube_levels[bi] };
+    const cube_idx: u8 = @intCast(16 + 36 * ri + 6 * gi + bi);
+
+    const avg = (@as(u16, c.r) + @as(u16, c.g) + @as(u16, c.b)) / 3;
+    var g: i32 = @divFloor(@as(i32, @intCast(avg)) - 8 + 5, 10);
+    g = std.math.clamp(g, 0, 23);
+    const gval: u8 = @intCast(8 + 10 * @as(u16, @intCast(g)));
+    const gray_rgb = pixel.Rgb8{ .r = gval, .g = gval, .b = gval };
+    const gray_idx: u8 = @intCast(232 + g);
+
+    return if (linDistSq(c, cube_rgb) <= linDistSq(c, gray_rgb)) cube_idx else gray_idx;
+}
+
+/// The RGB a given xterm-256 index displays as (for previewing quantized output).
+pub fn ansi256Rgb(idx: u8) pixel.Rgb8 {
+    if (idx < 16) return ansi16_palette[idx];
+    if (idx >= 232) {
+        const v: u8 = @intCast(8 + 10 * @as(u16, idx - 232));
+        return .{ .r = v, .g = v, .b = v };
+    }
+    const i: usize = idx - 16;
+    return .{ .r = cube_levels[i / 36], .g = cube_levels[(i / 6) % 6], .b = cube_levels[i % 6] };
+}
+
+/// Nearest xterm 16-color index for `c` in linear light.
+pub fn ansi16Index(c: pixel.Rgb8) u8 {
+    var best: u8 = 0;
+    var best_d: f32 = std.math.floatMax(f32);
+    for (ansi16_palette, 0..) |p, i| {
+        const d = linDistSq(c, p);
+        if (d < best_d) {
+            best_d = d;
+            best = @intCast(i);
+        }
+    }
+    return best;
+}
+
+pub fn ansi16Rgb(idx: u8) pixel.Rgb8 {
+    return ansi16_palette[idx & 0x0f];
+}
+
 test "opaque composite preserves source" {
     const out = rgbFromRgba(
         .{ .r = 255, .g = 0, .b = 0, .a = 255 },
@@ -158,6 +251,25 @@ test "trimmed mean and median reject an outlier the plain mean does not" {
     // ...while the robust statistics stay near the fill color.
     try std.testing.expect(trimmed.r < 0.15);
     try std.testing.expect(median.r < 0.15);
+}
+
+test "ansi256 quantization hits known palette indices" {
+    // Cube corners and a primary.
+    try std.testing.expectEqual(@as(u8, 16), ansi256Index(.{ .r = 0, .g = 0, .b = 0 })); // cube (0,0,0)
+    try std.testing.expectEqual(@as(u8, 231), ansi256Index(.{ .r = 255, .g = 255, .b = 255 })); // cube (5,5,5)
+    try std.testing.expectEqual(@as(u8, 196), ansi256Index(.{ .r = 255, .g = 0, .b = 0 })); // 16+36*5
+    // A neutral gray prefers the grayscale ramp (232..255), not the cube.
+    const gi = ansi256Index(.{ .r = 130, .g = 130, .b = 130 });
+    try std.testing.expect(gi >= 232);
+    // Round-trip RGB of an index is itself idempotent under re-quantization.
+    try std.testing.expectEqual(@as(u8, 196), ansi256Index(ansi256Rgb(196)));
+}
+
+test "ansi16 quantization picks the nearest system color" {
+    try std.testing.expectEqual(@as(u8, 0), ansi16Index(.{ .r = 0, .g = 0, .b = 0 }));
+    try std.testing.expectEqual(@as(u8, 15), ansi16Index(.{ .r = 255, .g = 255, .b = 255 }));
+    try std.testing.expectEqual(@as(u8, 9), ansi16Index(.{ .r = 255, .g = 0, .b = 0 })); // bright red
+    try std.testing.expectEqual(@as(u8, 12), ansi16Index(.{ .r = 80, .g = 80, .b = 255 })); // bright blue
 }
 
 test "representative handles trivial sets" {

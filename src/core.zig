@@ -425,10 +425,23 @@ pub fn renderFrameDiffToWriter(
 }
 
 fn validateSupportedColor(color_mode: ColorMode) RenderError!void {
+    // All modes are supported; ansi16/ansi256 are quantized from truecolor at
+    // emit time (see ansi.zig) so the renderer path is identical.
     switch (color_mode) {
-        .none, .truecolor => {},
-        .ansi16, .ansi256 => return RenderError.UnsupportedColorMode,
+        .none, .truecolor, .ansi16, .ansi256 => {},
     }
+}
+
+/// The RGB a cell color displays as under `mode`: identity for none/truecolor,
+/// the nearest palette entry for ansi256/ansi16. Used by presentation layers
+/// (glyphshot, the reconstruction harness) to preview/score quantized output;
+/// the ANSI writer emits the corresponding palette index directly.
+pub fn displayColor(c: Rgb8, mode: ColorMode) Rgb8 {
+    return switch (mode) {
+        .none, .truecolor => c,
+        .ansi256 => color.ansi256Rgb(color.ansi256Index(c)),
+        .ansi16 => color.ansi16Rgb(color.ansi16Index(c)),
+    };
 }
 
 /// Build an integral-luma table for the monochrome hot path when it is worth it.
@@ -1938,15 +1951,21 @@ test "ordered dithering changes low quadrant fixture deterministically" {
     try std.testing.expectEqual(@as(u21, '▘'), frame.codepoints[0]);
 }
 
-test "unsupported color modes are rejected explicitly" {
-    const pixels = [_]Rgba8{.{ .r = 0, .g = 0, .b = 0, .a = 255 }};
-
-    try std.testing.expectError(Error.UnsupportedColorMode, renderToCells(
-        std.testing.allocator,
-        .{ .width = 1, .height = 1, .stride = @sizeOf(Rgba8), .pixels = &pixels },
-        .{ .columns = 1, .rows = 1, .color = .ansi256 },
-        .{ .mode = .density, .fit = .stretch },
-    ));
+test "ansi256 and ansi16 render and carry truecolor cells (quantized at emit)" {
+    const pixels = [_]Rgba8{.{ .r = 200, .g = 40, .b = 40, .a = 255 }};
+    for ([_]ColorMode{ .ansi256, .ansi16 }) |mode| {
+        var frame = try renderToCells(
+            std.testing.allocator,
+            .{ .width = 1, .height = 1, .stride = @sizeOf(Rgba8), .pixels = &pixels },
+            .{ .columns = 1, .rows = 1, .color = mode },
+            .{ .mode = .partition, .partition = .half_1x2, .fit = .stretch },
+        );
+        defer frame.deinit(std.testing.allocator);
+        try std.testing.expectEqual(mode, frame.color);
+        // displayColor maps the cell to a real palette entry (a reddish one here).
+        const shown = displayColor(frame.fg[0], mode);
+        try std.testing.expect(shown.r > shown.g and shown.r > shown.b);
+    }
 }
 
 test "quadrant renderer is rejected for ascii-only terminals" {

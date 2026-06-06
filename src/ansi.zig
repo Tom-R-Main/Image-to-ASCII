@@ -9,6 +9,7 @@
 const std = @import("std");
 
 const core = @import("core.zig");
+const color = @import("color.zig");
 
 const Rgb8 = core.Rgb8;
 
@@ -53,11 +54,11 @@ pub fn writeFrame(writer: *std.Io.Writer, frame: core.Frame) !void {
                 const next_fg = frame.fg[idx];
                 const next_bg = frame.bg[idx];
                 if (current_fg == null or !eqlRgb(current_fg.?, next_fg)) {
-                    _ = try writeColor(writer, fg_lead, next_fg);
+                    _ = try writeColor(writer, frame.color, true, next_fg);
                     current_fg = next_fg;
                 }
                 if (current_bg == null or !eqlRgb(current_bg.?, next_bg)) {
-                    _ = try writeColor(writer, bg_lead, next_bg);
+                    _ = try writeColor(writer, frame.color, false, next_bg);
                     current_bg = next_bg;
                 }
             }
@@ -103,11 +104,11 @@ pub fn writeFrameRegion(writer: *std.Io.Writer, frame: core.Frame, viewport: cor
 
             if (frame.color != .none) {
                 if (current_fg == null or !eqlRgb(current_fg.?, fg)) {
-                    _ = try writeColor(writer, fg_lead, fg);
+                    _ = try writeColor(writer, frame.color, true, fg);
                     current_fg = fg;
                 }
                 if (current_bg == null or !eqlRgb(current_bg.?, bg)) {
-                    _ = try writeColor(writer, bg_lead, bg);
+                    _ = try writeColor(writer, frame.color, false, bg);
                     current_bg = bg;
                 }
             }
@@ -241,11 +242,11 @@ fn writeCells(
             const next_fg = frame.fg[idx];
             const next_bg = frame.bg[idx];
             if (state.fg == null or !eqlRgb(state.fg.?, next_fg)) {
-                bytes += try writeColor(writer, fg_lead, next_fg);
+                bytes += try writeColor(writer, frame.color, true, next_fg);
                 state.fg = next_fg;
             }
             if (state.bg == null or !eqlRgb(state.bg.?, next_bg)) {
-                bytes += try writeColor(writer, bg_lead, next_bg);
+                bytes += try writeColor(writer, frame.color, false, next_bg);
                 state.bg = next_bg;
             }
         }
@@ -283,21 +284,51 @@ fn writeCodepoint(writer: *std.Io.Writer, codepoint: u21) !usize {
     return len;
 }
 
-/// Write `<lead>R;G;Bm` for a truecolor SGR sequence. Longest possible is
-/// 7 (lead) + 3+1 + 3+1 + 3 + 1 = 19 bytes.
-fn writeColor(writer: *std.Io.Writer, lead: []const u8, c: Rgb8) !usize {
+/// Emit an SGR color sequence for `c` under `mode`. Truecolor emits
+/// `38;2;R;G;B`; ansi256 maps to the nearest palette index and emits `38;5;n`;
+/// ansi16 maps to the nearest of the 16 system colors and emits the 30-37/90-97
+/// (fg) or 40-47/100-107 (bg) code. `.none` never reaches here (callers guard).
+fn writeColor(writer: *std.Io.Writer, mode: core.ColorMode, is_fg: bool, c: Rgb8) !usize {
     var buf: [24]u8 = undefined;
-    @memcpy(buf[0..lead.len], lead);
-    var n: usize = lead.len;
-    n += writeDecimal(buf[n..], c.r);
-    buf[n] = ';';
-    n += 1;
-    n += writeDecimal(buf[n..], c.g);
-    buf[n] = ';';
-    n += 1;
-    n += writeDecimal(buf[n..], c.b);
-    buf[n] = 'm';
-    n += 1;
+    var n: usize = 0;
+    switch (mode) {
+        .truecolor => {
+            const lead = if (is_fg) fg_lead else bg_lead;
+            @memcpy(buf[0..lead.len], lead);
+            n = lead.len;
+            n += writeDecimal(buf[n..], c.r);
+            buf[n] = ';';
+            n += 1;
+            n += writeDecimal(buf[n..], c.g);
+            buf[n] = ';';
+            n += 1;
+            n += writeDecimal(buf[n..], c.b);
+            buf[n] = 'm';
+            n += 1;
+        },
+        .ansi256 => {
+            const lead = if (is_fg) "\x1b[38;5;" else "\x1b[48;5;";
+            @memcpy(buf[0..lead.len], lead);
+            n = lead.len;
+            n += writeDecimal(buf[n..], color.ansi256Index(c));
+            buf[n] = 'm';
+            n += 1;
+        },
+        .ansi16 => {
+            const idx = color.ansi16Index(c);
+            const base: u8 = if (is_fg)
+                (if (idx < 8) 30 + idx else 90 + (idx - 8))
+            else
+                (if (idx < 8) 40 + idx else 100 + (idx - 8));
+            buf[0] = 0x1b;
+            buf[1] = '[';
+            n = 2;
+            n += writeDecimal(buf[n..], base);
+            buf[n] = 'm';
+            n += 1;
+        },
+        .none => unreachable,
+    }
     try writer.writeAll(buf[0..n]);
     return n;
 }
@@ -338,6 +369,25 @@ fn writeU32Decimal(dst: []u8, v: u32) usize {
 
 fn eqlRgb(a: Rgb8, b: Rgb8) bool {
     return a.r == b.r and a.g == b.g and a.b == b.b;
+}
+
+test "ansi256 and ansi16 emit indexed SGR, truecolor emits 24-bit" {
+    var cps = [_]u21{'X'};
+    var fg = [_]Rgb8{.{ .r = 255, .g = 0, .b = 0 }};
+    var bg = [_]Rgb8{.{ .r = 0, .g = 0, .b = 0 }};
+
+    const cases = .{
+        .{ core.ColorMode.truecolor, "\x1b[38;2;255;0;0m" },
+        .{ core.ColorMode.ansi256, "\x1b[38;5;196m" },
+        .{ core.ColorMode.ansi16, "\x1b[91m" }, // bright red fg
+    };
+    inline for (cases) |case| {
+        var buf: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        const frame = core.Frame{ .columns = 1, .rows = 1, .color = case[0], .codepoints = &cps, .fg = &fg, .bg = &bg };
+        try writeFrame(&w, frame);
+        try std.testing.expect(std.mem.indexOf(u8, w.buffered(), case[1]) != null);
+    }
 }
 
 test "writeDecimal matches std formatting for all bytes" {

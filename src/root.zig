@@ -92,6 +92,7 @@ pub const default_glyph_cell_height = core.default_glyph_cell_height;
 pub const default_glyph_cell_width = core.default_glyph_cell_width;
 pub const defaultGlyphCoverage = core.defaultGlyphCoverage;
 pub const defaultGlyphMaskBit = core.defaultGlyphMaskBit;
+pub const displayColor = core.displayColor;
 pub const sextantMask = symbol.sextantMask;
 pub const octantMask = symbol.octantMask;
 pub const defaultGlyphTone = core.defaultGlyphTone;

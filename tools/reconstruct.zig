@@ -35,8 +35,10 @@ pub fn reconstructForMode(allocator: std.mem.Allocator, frame: ascii.Frame, mode
         while (col < frame.columns) : (col += 1) {
             const idx = @as(usize, row) * frame.columns + col;
             const cp = frame.codepoints[idx];
-            const fg: Rgb = if (frame.color != .none) frame.fg[idx] else .{ .r = 255, .g = 255, .b = 255 };
-            const bg: Rgb = if (frame.color != .none) frame.bg[idx] else .{ .r = 0, .g = 0, .b = 0 };
+            // Score the actually-displayed color: identity for truecolor, the
+            // nearest palette entry for ansi256/ansi16.
+            const fg: Rgb = if (frame.color != .none) ascii.displayColor(frame.fg[idx], frame.color) else .{ .r = 255, .g = 255, .b = 255 };
+            const bg: Rgb = if (frame.color != .none) ascii.displayColor(frame.bg[idx], frame.color) else .{ .r = 0, .g = 0, .b = 0 };
 
             if (structuralMask(cp, mode)) |kind| {
                 // Block / Braille glyphs have real sub-cell structure: paint each

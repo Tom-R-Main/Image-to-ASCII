@@ -7,7 +7,7 @@
   },
   "corpus": {
     "name": "quality-corpus",
-    "cases": 9
+    "cases": 11
   },
   "results": [
     {
@@ -160,6 +160,50 @@
       "psnr_db": 19.611951,
       "ssim": 0.942535,
       "edge_correlation": 0.849787,
+      "slash_golden": false,
+      "slash_golden_pass": false,
+      "observed_codepoint": 9600
+    },
+    {
+      "fixture_name": "color-bars-half-ansi256",
+      "input_path": "testdata/corpus/color-bars.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
+      "mode": "partition",
+      "partition": "half_1x2",
+      "color_mode": "ansi256",
+      "sampler_policy": "direct_box",
+      "output_columns": 13,
+      "output_rows": 5,
+      "compare_width": 26,
+      "compare_height": 20,
+      "mse": 765.871795,
+      "psnr_db": 19.289243,
+      "ssim": 0.939380,
+      "edge_correlation": 0.845781,
+      "slash_golden": false,
+      "slash_golden_pass": false,
+      "observed_codepoint": 9600
+    },
+    {
+      "fixture_name": "color-bars-half-ansi16",
+      "input_path": "testdata/corpus/color-bars.ppm",
+      "adapter": "ppm_support",
+      "image_format": "ppm",
+      "decoded_pixel_format": "rgba8",
+      "mode": "partition",
+      "partition": "half_1x2",
+      "color_mode": "ansi16",
+      "sampler_policy": "direct_box",
+      "output_columns": 13,
+      "output_rows": 5,
+      "compare_width": 26,
+      "compare_height": 20,
+      "mse": 1578.615385,
+      "psnr_db": 16.148040,
+      "ssim": 0.864804,
+      "edge_correlation": 0.733678,
       "slash_golden": false,
       "slash_golden_pass": false,
       "observed_codepoint": 9600
