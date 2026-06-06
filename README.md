@@ -402,8 +402,9 @@ zig build run -- --input testdata/real/photo-small.jpg --width 80 --height 24 --
 ```
 
 Flags: `--input` (PPM/PAM/PNG/JPEG), `--synthetic gradient|checkerboard|color-bars`, `--width`, `--height`,
-`--mode density|partition|braille|glyph-tone|glyph-structure`, `--partition density|half|quadrant`,
-`--color none|truecolor`, `--fit contain|cover|stretch`, `--dither none|ordered-2x2|ordered-4x4`, `--invert`. If
+`--mode density|partition|braille|glyph-tone|glyph-structure`, `--partition density|half|quadrant|sextant|octant`,
+`--color none|16|256|truecolor`, `--fit contain|cover|stretch`, `--dither none|ordered-2x2|ordered-4x4|floyd-steinberg`,
+`--invert`. If
 `--input` is omitted, a synthetic gradient is rendered.
 
 PNG/JPEG loading is implemented with `zigimg` in `test_support/image_loader.zig` and imported only by the CLI/tools. The
@@ -485,7 +486,7 @@ cell-render mermaid plan.mmd --width 100 --height 30 --overflow clip
 cell-render mermaid plan.mmd --max-width 120 --max-height 40 --overflow error
 ```
 
-Flags: `--ascii` / `--unicode` (glyph set), `--color none|truecolor`, `--width`/`--height` (exact pane, pad or clip),
+Flags: `--ascii` / `--unicode` (glyph set), `--color none|16|256|truecolor`, `--width`/`--height` (exact pane, pad or clip),
 `--max-width`/`--max-height` (bound only), `--overflow allow|clip|error`. With no viewport flags the diagram renders at
 its natural size. Syntax errors are reported to stderr as `file:line:col: message` and exit non-zero — the actionable
 feedback an agent needs to fix generated diagrams. The supported subset and renderer limitations are documented under

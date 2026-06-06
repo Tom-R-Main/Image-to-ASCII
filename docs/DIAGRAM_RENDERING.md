@@ -430,8 +430,9 @@ class and ER diagrams render compartment cards (with UML relationship ends and
 cardinality respectively); card/C4/architecture diagrams render planning cards
 through the same compartment renderer (C4 and architecture parse their real
 syntax), and C4 boundaries / architecture groups now draw nested containment
-boxes (see Containment above). Next: `mindmap`/`block` backends on top of the
-cluster machinery, and spreading multiple same-side class decorations across the
+boxes (see Containment above), and `mindmap` renders as a layered tree (see
+Mindmap above). Next: a `block-beta` grid layout (its column packing needs a
+dedicated layout, not the DAG engine), and spreading multiple same-side class decorations across the
 parent's edge.
 
 The official Mermaid CLI can be useful as an optional visual oracle during development, but it must not become a runtime
